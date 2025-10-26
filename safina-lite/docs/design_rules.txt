@@ -1,0 +1,157 @@
+Nice — below is a compact, senior-engineer-grade playbook of principles, rules, patterns and best practices for building **optimal, efficient, scalable, secure, and stable systems**. Treat it as a reference checklist you can pin on the wall or paste into an architecture review. I’ve grouped items so architects, senior engineers, DevOps and SREs can find what matters to them quickly.
+
+# Core design & architecture principles
+
+* **Single Responsibility & Separation of Concerns** — each service/module has one reason to change. Keep logic orthogonal.
+* **Modularity & Bounded Contexts** — split by business domain; enforce clear APIs and contracts between modules.
+* **Design for Failure** — assume components fail. Use retries with backoff, circuit breakers, bulkheads and graceful degradation.
+* **YAGNI + KISS** — don’t build features you don’t need; prefer simple, readable designs over clever complexity.
+* **Explicit Interfaces and Contracts** — document contracts (OpenAPI, protobuf), version them, and keep backward compatibility strategies.
+* **Encapsulation** — hide implementation details so you can change internals without breaking callers.
+* **Idempotency** — design operations that can be safely retried, especially across networks.
+* **Push decisions to the right level** — push config choices to deployment/config, not code; push domain logic into domain layer.
+* **Prefer asynchronous where it improves resiliency/scale** — use events/queues for decoupling and smoothing load.
+
+# Architecture patterns & when to use them
+
+* **Microservices** — when teams own bounded contexts, need independent deploys, and can tolerate added operational complexity.
+* **Modular Monolith** — start here for early-stage systems to avoid microservices overhead; modularize for future split.
+* **Event-driven / Event sourcing** — use for complex domain histories, auditability, and decoupling (pay attention to complexity).
+* **CQRS** — separate read/write models when read and write concerns diverge in scale or shape.
+* **Service Mesh** — for consistent cross-service networking concerns (observability, security, retries) in polyglot environments.
+* **API Gateway / Backends for Frontends (BFF)** — tailor APIs per client (web, mobile) to reduce chattiness and simplify clients.
+* **Sidecar pattern** — attach nonbusiness concerns (proxy, telemetry) to service instances.
+
+# System qualities — measurable attributes & KPIs
+
+* **Availability** — SLA/SLO/SLA definitions; measure uptime, error budget burn rate.
+* **Latency** — p99/p95 latencies; tail latency matters more than average.
+* **Throughput** — requests/sec, messages/sec.
+* **Error rate** — 4xx vs 5xx breakdown; percent of failing requests.
+* **Mean Time To Detect (MTTD)** and **Mean Time To Repair (MTTR)** — target low MTTD and MTTR.
+* **Capacity & Utilization** — CPU/memory/disk IOPS and headroom targets.
+* **Cost per request / cost per user** — track cloud cost efficiency.
+
+# Design rules & tradeoffs
+
+* **Optimize for the common case first** — but design extension points for the rare case.
+* **Make correctness visible** — fail loudly in dev/test, degrade gracefully in prod.
+* **Prefer explicit over magic** — explicit config, explicit dependencies, explicit retries.
+* **Data consistency tradeoffs** — choose appropriate consistency model (strong, bounded staleness, eventual) per use case; document it.
+* **Simplicity vs performance** — optimize only when justified by metrics; measure before optimizing.
+* **Security-by-design** — every design decision must consider threat surface and least privilege.
+
+# Data design & storage
+
+* **Model data by access pattern** — choose storage (RDBMS, document, wide-column, time-series, object storage) to match read/write patterns.
+* **Schema migration strategy** — backwards/forwards compatible migrations; feature flags for rollout.
+* **Partitioning & sharding** — shard on cardinality and access patterns; plan rebalancing/migration.
+* **Indexing discipline** — track index cost (writes) vs query benefit.
+* **Retention & lifecycle policies** — TTLs, cold/hot tiers, archive strategy.
+* **Use immutable events for auditability** — avoid deleting raw event data; store pointers, not copies, when possible.
+
+# Security & privacy best practices
+
+* **Least privilege everywhere** — IAM, service accounts, database roles, network policies.
+* **Defense in depth** — perimeter + network segmentation + host hardening + application auth.
+* **Zero trust network principles** — authenticate & authorize each request; avoid implicit trust inside VPC.
+* **Secrets management** — vaults, KMS, short-lived credentials; never store secrets in source control.
+* **Secure defaults** — TLS by default, secure cipher suites, disable unused ports/services.
+* **Input validation & output encoding** — avoid injection attacks; use typed data layers.
+* **Audit logs & forensics** — immutable logging with retention aligned to compliance needs.
+* **Threat modeling** — do it early and iterate (STRIDE/PASTA style).
+* **GDPR/Privacy by design** — data minimization, consent, right to be forgotten mechanisms where relevant.
+
+# Reliability, SRE & DevOps rules
+
+* **SLO-driven development** — set SLOs and runbooks, let error budgets guide releases and changes.
+* **Automated, repeatable deployments** — CI/CD pipelines with automated tests and gated promotion.
+* **Infrastructure as Code** — manage infra with code (Terraform/CloudFormation), review changes via PRs.
+* **Immutable infrastructure** — replace rather than mutate in place; use images/containers.
+* **Blue/Green or Canary deployments** — reduce blast radius; test in production with traffic splitting.
+* **Automated rollback & health checks** — health probes and automatic rollback when SLOs breach.
+* **Chaos engineering** — regularly exercise failure scenarios (within safety limits) to validate assumptions.
+* **Observability-first** — instrument for metrics, logs, and distributed traces from day one.
+* **Runbooks & playbooks** — documented steps for common incidents; keep them near code.
+
+# Observability & testing
+
+* **Three pillars**: metrics (prometheus), logs (structured), distributed traces (open telemetry).
+* **High-cardinality telemetry caution** — control cardinality to avoid storage blowout.
+* **Sane alerting** — alert on symptoms (high latency, error rate), not on every failure; use multi-stage alerts (pager → channel → ticket).
+* **Test pyramid** — unit tests, component/service tests, integration tests, end-to-end tests; invest in fast, reliable tests.
+* **Contract testing** — consumer-driven contract tests to catch regressions between services.
+* **Chaos & fault injection tests** — simulate network partitions, instance failures, resource exhaustion in CI or staging.
+
+# Performance & scalability patterns
+
+* **Autoscaling with safeguards** — horizontal scaling preferred; autoscale on meaningful signals (latency, queue depth), not CPU alone.
+* **Backpressure & queueing** — accept bursts using queues; apply backpressure to clients when overloaded.
+* **Caching strategy** — multi-level caching (client, CDN, edge, app, DB cache); define TTLs and invalidation policy.
+* **Rate limiting & throttling** — protect systems and provide predictable behavior.
+* **Bulkheads & resource isolation** — isolate critical workloads to prevent noisy neighbors.
+* **Optimize for tail latency** — parallelize dependent calls, avoid synchronous chains; use hedged requests where needed.
+
+# Networking & infrastructure
+
+* **Network segmentation** — separate public/private subnets, control plane vs data plane separation.
+* **Use CDNs and edge services** for static content and to reduce latency for global audiences.
+* **DNS resilience** — multi-region endpoints and health-checked DNS routing (failover).
+* **Bandwidth & connection limits** — dimension based on peak expected loads, not just average.
+
+# Cost management & efficiency
+
+* **Right-size, then autoscale** — measure actual usage, choose instance types or serverless appropriately.
+* **Spot/preemptible for batch** — use lower-cost capacity where interruptions are acceptable.
+* **Measure cost per feature** — know which features drive spend; optimize expensive ones.
+* **Lifecycle policies for storage** — tier cold data and compress/evict when practical.
+
+# Governance, compliance & team rules
+
+* **Ownership model** — team owns code, infra, SLOs (you build it, you run it).
+* **Architecture review board** — light-weight approvals for risky or cross-cutting changes.
+* **Change control for critical systems** — controlled and audited changes, with rollback plans.
+* **Oncall & blameless postmortems** — learn from incidents; action items owned and tracked.
+* **Documentation culture** — architecture docs, runbooks, API docs, and README-for-every-service.
+* **Capacity planning & roadmap alignment** — connect architecture choices to business goals.
+
+# Practical rules of thumb & heuristics
+
+* **p95 vs p99** — optimize for p99 when customer experience is sensitive to tails.
+* **Keep 30–50% headroom** for capacity to handle load spikes and maintenance.
+* **Max 10 services per team** — if more, split team or re-evaluate boundaries.
+* **Short-lived feature flags** — keep flags temporary and remove once rollout is complete.
+* **Prefer simple schemas** — evolve with migrations, not upfront over-engineering.
+* **Automate repetitive operational tasks** — invest in automation early where costs accumulate.
+
+# Common anti-patterns to avoid
+
+* **Big ball of mud / unbounded monolith** — no clear boundaries; everyone edits everything.
+* **Premature microservices** — splitting before operational maturity leads to overhead debt.
+* **Relying on manual processes** — humans are slow and error-prone for repetitive ops.
+* **Blindly caching** — stale or inconsistent caches without invalidation rules cause subtle bugs.
+* **Ignoring observability** — you can’t fix what you can’t measure.
+* **Over-privileged accounts** — leads to breaches and lateral movement risk.
+
+# Quick architecture checklist (for reviews)
+
+1. What are SLOs, SLAs, and error budget rules?
+2. Clear bounded contexts and service boundaries?
+3. Data ownership and consistency model documented?
+4. Scaling strategy and bottlenecks identified?
+5. Failure modes & recovery plan (RTO/RPO)?
+6. Security controls: least privilege, encryption at rest/in transit, secrets management?
+7. CI/CD, infra-as-code, and deployment strategy?
+8. Observability: metrics, logs, traces, alerting?
+9. Runbooks and oncall rotation defined?
+10. Cost estimates & operational expense plan?
+
+# Actionable starters (what to implement first)
+
+* Instrument request/operation with trace IDs + basic metrics (latency, success rate).
+* Add health checks and a circuit breaker around external calls.
+* Add SLOs and an alert for error budget burn.
+* Introduce an API contract (OpenAPI/proto) and contract tests.
+* Implement secrets management and TLS everywhere.
+
+---
