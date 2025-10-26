@@ -1,0 +1,52 @@
+{
+  "digital_lending_overview": {
+    "section": "Digital Lending Overview",
+    "faqs": [
+      {
+        "question": "What is a digital loan?",
+        "answer": "A digital loan (also called LFA, personal loan, or term loan) is a loan product offered through NCBA's digital channels. It provides customers with quick access to credit based on their banking history and creditworthiness.",
+        "tags": ["definition", "products"]
+      },
+      {
+        "question": "What is the difference between digital and mobile loans?",
+        "answer": "Digital loans (LFA) are term loans with longer repayment periods and require classification A5 or better. Mobile loans (instant loans/sasa loans) are short-term loans accessible through mobile banking and require classification A7 or better.",
+        "tags": ["products", "comparison"]
+      }
+    ]
+  },
+  "eligibility_criteria": {
+    "section": "Eligibility Criteria",
+    "faqs": [
+      {
+        "question": "What are the basic eligibility requirements?",
+        "answer": "Basic requirements include: (1) Individual account with sole signatory, (2) Minimum 6 months banking relationship, (3) Mobile banking enrollment, (4) Valid KRA PIN, (5) Account classification A5+ for digital or A7+ for mobile, (6) No active arrears, (7) Consistent banking activity.",
+        "tags": ["requirements", "eligibility"]
+      },
+      {
+        "question": "Why do customers need mobile banking?",
+        "answer": "Mobile banking (NCBA SASA) enrollment is mandatory for digital loan products. It enables customers to access loan services, receive notifications, and manage their accounts digitally.",
+        "tags": ["mobile_banking", "requirements"]
+      },
+      {
+        "question": "What is the minimum banking vintage required?",
+        "answer": "Customers must have at least 6 months of banking relationship with NCBA with consistent transaction activity to qualify for digital loans.",
+        "tags": ["vintage", "requirements"]
+      }
+    ]
+  },
+  "dpd_arrears": {
+    "section": "DPD and Arrears",
+    "faqs": [
+      {
+        "question": "What is the cooling period for cleared arrears?",
+        "answer": "After clearing all arrears, customers must wait 60 days (2 months) cooling period before becoming eligible for new loan limits. If arrears occur again during this period, the cooling period restarts.",
+        "tags": ["arrears", "cooling_period"]
+      },
+      {
+        "question": "What types of arrears affect eligibility?",
+        "answer": "All types of arrears affect eligibility: loan arrears (any loan), credit card arrears, account excess/overdraw (negative balance on any linked account). For digital loans, threshold is 3 days; for mobile loans, 9 days.",
+        "tags": ["arrears", "types"]
+      }
+    ]
+  }
+}
