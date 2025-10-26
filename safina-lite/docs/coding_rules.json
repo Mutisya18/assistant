@@ -1,0 +1,173 @@
+{
+  "system_design_ruleset": {
+    "meta": {
+      "version": "1.0.0",
+      "owner": "Engineering Architecture Office",
+      "scope": "Global software development and LLM code generation",
+      "last_updated": "2025-10-26"
+    },
+    "philosophy": {
+      "principles": [
+        "Simplicity over cleverness",
+        "Predictability and explicitness in all logic flows",
+        "Fail fast, recover gracefully",
+        "Stateless and immutable design where possible",
+        "Readable > clever > fast (optimize last)"
+      ],
+      "forbidden_practices": [
+        "Hardcoded credentials or secrets",
+        "Magic numbers or unclear constants",
+        "Excessive abstraction or unnecessary inheritance",
+        "Implicit global states",
+        "Premature optimization"
+      ]
+    },
+    "architecture": {
+      "style": "Clean/Hexagonal Architecture",
+      "layers": [
+        "Domain: core business logic, pure, framework-independent",
+        "Application: use cases, orchestration, services",
+        "Infrastructure: frameworks, APIs, persistence, messaging",
+        "Interface: REST/GraphQL/UI/event gateways"
+      ],
+      "deployment": {
+        "model": "Microservices or Modular Monolith",
+        "scaling_strategy": "Horizontal (stateless, shared-nothing)",
+        "communication": "API contracts or event-driven architecture"
+      }
+    },
+    "code_standards": {
+      "naming_conventions": {
+        "classes": "PascalCase",
+        "functions": "camelCase",
+        "variables": "camelCase",
+        "constants": "UPPER_SNAKE_CASE",
+        "modules": "lowercase_with_underscores"
+      },
+      "functions": {
+        "max_lines": 30,
+        "rule": "Each function performs one atomic task",
+        "inputs_outputs": "Explicit, typed, validated",
+        "side_effects": "Avoid unless necessary and documented"
+      },
+      "classes": {
+        "follow_SOLID": true,
+        "responsibility": "Single clear purpose per class",
+        "dependencies": "Injected via interfaces or constructors"
+      },
+      "error_handling": {
+        "strategy": "Structured, typed exceptions",
+        "log_before_throw": true,
+        "fail_fast_recover_gracefully": true
+      }
+    },
+    "performance": {
+      "optimization_strategy": [
+        "Profile first, then optimize",
+        "Batch I/O and network calls",
+        "Cache expensive operations (in-memory + distributed)",
+        "Lazy load heavy data",
+        "Async or parallelize I/O where possible",
+        "Precompute or memoize repeated computation"
+      ],
+      "data_handling": {
+        "prefer_streaming": true,
+        "pagination_required": true,
+        "connection_pooling": true
+      }
+    },
+    "security": {
+      "authentication": ["JWT", "OAuth2", "MFA"],
+      "authorization": ["RBAC", "ABAC"],
+      "data_protection": {
+        "encryption_in_transit": "TLS 1.3+",
+        "encryption_at_rest": "AES-256"
+      },
+      "validation": {
+        "input_sanitization": true,
+        "output_encoding": true
+      },
+      "dependency_scanning": ["Snyk", "Trivy", "Dependabot"],
+      "secrets_management": "Environment variables or vaults only"
+    },
+    "scalability": {
+      "design": "Stateless services, shared-nothing architecture",
+      "patterns": [
+        "Event-driven messaging (Kafka/RabbitMQ)",
+        "Caching layers (Redis/Memcached)",
+        "API gateway routing and rate limiting",
+        "Autoscaling and load balancing"
+      ],
+      "database": {
+        "scaling": ["Sharding", "Replication"],
+        "optimization": ["Indexes", "Connection pooling", "Read replicas"]
+      }
+    },
+    "reliability": {
+      "observability": {
+        "health_endpoints": ["/health", "/ready", "/metrics"],
+        "logging": "Structured JSON with trace IDs",
+        "metrics": "Prometheus/OpenTelemetry",
+        "tracing": "Distributed (OpenTelemetry/Jaeger)",
+        "alerts": "SLO/SLI-based alerts tied to user impact"
+      },
+      "testing": {
+        "unit_coverage_minimum": 0.9,
+        "test_types": [
+          "Unit",
+          "Integration",
+          "End-to-End",
+          "Load/Stress",
+          "Security/Penetration"
+        ]
+      }
+    },
+    "version_control": {
+      "branching_model": "Trunk-based or Gitflow",
+      "commit_format": "Conventional commits (e.g., feat(auth): add MFA endpoint)",
+      "pull_requests": {
+        "required_reviews": 1,
+        "automated_checks": ["Lint", "Test", "Security scan"]
+      },
+      "release_management": {
+        "tagging": "Semantic versioning (v1.2.3)",
+        "changelog": "Auto-generated"
+      }
+    },
+    "maintainability": {
+      "documentation": "Required for all public functions and classes",
+      "type_hints": true,
+      "no_hardcoded_values": true,
+      "refactoring_frequency": "Every sprint or when touching old code",
+      "principles": ["DRY", "KISS", "YAGNI"],
+      "backward_compatibility": true
+    },
+    "issue_tracking": {
+      "system": ["Jira", "Linear", "GitHub Issues"],
+      "traceability": "Requirement → Design → Code → Test → Deploy → Monitor",
+      "incident_management": {
+        "postmortems_required": true,
+        "runbooks_required": true
+      },
+      "automation": ["CI/CD integration", "IaC environment setup"]
+    },
+    "llm_generation_rules": {
+      "no_insecure_patterns": true,
+      "include_docstrings": true,
+      "add_type_hints": true,
+      "generate_unit_tests": true,
+      "respect_architecture": true,
+      "avoid_duplication": true,
+      "output_format": "consistent with repo conventions",
+      "todo_handling": "Insert TODO with context if uncertain"
+    },
+    "system_design_mindset": {
+      "approach": [
+        "User experience → System flow → Data flow → Logic flow → Infrastructure",
+        "Design for failure and resilience first",
+        "Everything must be observable, replaceable, reproducible"
+      ],
+      "core_principle": "Simplicity scales; complexity fails"
+    }
+  }
+}
