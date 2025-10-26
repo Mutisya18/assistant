@@ -1,0 +1,2712 @@
+# Safina Lite - Complete System Architecture & Logic Design
+
+Based on your requirements and the analysis of both systems, here's the comprehensive architecture and logic design for Safina Lite.
+
+---
+
+## 🎯 **System Overview**
+
+**Safina Lite** is a modular, LLM-agnostic banking query assistant with:
+- **Tool-calling pattern** for intent routing
+- **Plugin-based processors** (add/remove without code changes)
+- **Multi-LLM support** (Ollama, Gemini) with hot-swapping
+- **2-hour session-based logging**
+- **Lightweight validation** (configurable per processor)
+- **SQLite-cached CSV data** for performance
+
+---
+
+## 📐 **High-Level Architecture**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Frontend (index.html)                    │
+│  - Modern chat interface                                     │
+│  - WebSocket-ready (for future streaming)                   │
+│  - Theme switching, typing indicators                        │
+└────────────────────┬────────────────────────────────────────┘
+                     │ HTTP POST /api/query
+┌────────────────────▼────────────────────────────────────────┐
+│                  Flask API (app.py)                          │
+│  - /api/query (main endpoint)                                │
+│  - /api/models/list (available LLMs)                         │
+│  - /api/models/switch (change LLM mid-session)              │
+│  - /api/health (service status)                              │
+└────────────────────┬────────────────────────────────────────┘
+                     │
+┌────────────────────▼────────────────────────────────────────┐
+│              Orchestrator (orchestrator.py)                  │
+│  - Session management                                        │
+│  - LLM provider selection                                    │
+│  - Tool-calling coordination                                 │
+│  - Context window management                                 │
+└───┬──────────────┬──────────────┬─────────────┬────────────┘
+    │              │              │             │
+    ▼              ▼              ▼             ▼
+┌─────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐
+│   LLM   │  │ Context  │  │Tool/Proc │  │   Logger     │
+│ Manager │  │ Manager  │  │ Registry │  │  (2hr sess)  │
+└─────────┘  └──────────┘  └──────────┘  └──────────────┘
+    │                            │              
+    ▼                            ▼              
+┌─────────────────┐    ┌────────────────────────────────┐
+│  LLM Providers: │    │   Processor Plugins:           │
+│  - OllamaLLM    │    │   - digital_lending/           │
+│  - GeminiLLM    │    │     ├── processor.py           │
+│  - (extensible) │    │     ├── tools.py               │
+│                 │    │     ├── data/                  │
+│                 │    │     │   ├── warehouse.csv      │
+│                 │    │     │   └── reasons.csv        │
+│                 │    │     └── prompts.yaml           │
+│                 │    │   - faq/                       │
+│                 │    │   - general_inquiry/           │
+└─────────────────┘    └────────────────────────────────┘
+```
+
+---
+
+## 🧩 **Component-by-Component Logic**
+
+### **1. Flask API Layer (`api/app.py`)**
+
+#### **PURPOSE**
+Entry point for all requests. Handles HTTP, validates input, delegates to orchestrator.
+
+#### **LOGIC FLOW**
+
+```
+FUNCTION handle_query_request(request):
+    INPUT: HTTP request with {query, session_id, model_preference}
+    OUTPUT: JSON response with {message, intent, confidence, data, suggestions}
+    
+    PRE: request contains valid JSON
+    POST: response logged and context updated
+    
+    VALIDATE request
+    IF validation fails:
+        RETURN error(400, "Invalid request format")
+    END IF
+    
+    EXTRACT query_text, session_id, model_preference FROM request
+    
+    IF session_id is NULL:
+        session_id = generate_session_id()
+    END IF
+    
+    LOG incoming_query(query_text, session_id, timestamp)
+    
+    TRY:
+        response = orchestrator.process_query(
+            query=query_text,
+            session_id=session_id,
+            model_preference=model_preference
+        )
+        
+        LOG response(session_id, response.status, response.intent)
+        
+        RETURN json({
+            message: response.message,
+            intent: response.intent,
+            confidence: response.confidence,
+            data: response.data,
+            suggestions: response.suggestions,
+            status: "success"
+        })
+        
+    CATCH OrchestratorError as e:
+        LOG error(session_id, e.message, e.stack_trace)
+        RETURN json({
+            message: "I encountered an error processing your request",
+            status: "error",
+            error: e.message
+        })
+    END TRY
+END FUNCTION
+```
+
+#### **ENDPOINTS LOGIC**
+
+**A. POST /api/query**
+- Main query processing endpoint
+- Delegates to orchestrator
+- Returns structured response
+
+**B. GET /api/models/list**
+```
+FUNCTION list_available_models():
+    models = llm_manager.get_available_providers()
+    
+    RETURN json({
+        available: [
+            {name: "ollama", models: ["llama3.2:3b", "mistral:7b"]},
+            {name: "gemini", models: ["gemini-1.5-flash", "gemini-1.5-pro"]}
+        ],
+        current: orchestrator.current_llm_provider
+    })
+END FUNCTION
+```
+
+**C. POST /api/models/switch**
+```
+FUNCTION switch_model(request):
+    INPUT: {provider: "gemini", model: "gemini-1.5-flash", session_id}
+    
+    VALIDATE provider exists in llm_manager
+    IF not valid:
+        RETURN error(400, "Unknown provider")
+    END IF
+    
+    orchestrator.switch_llm_provider(provider, model, session_id)
+    
+    LOG model_switch(session_id, old_provider, new_provider)
+    
+    RETURN json({
+        status: "success",
+        message: f"Switched to {provider}:{model}",
+        current_provider: provider
+    })
+END FUNCTION
+```
+
+**D. GET /api/health**
+```
+FUNCTION health_check():
+    checks = {
+        api: "healthy",
+        llm_providers: [],
+        database: null,
+        processors: []
+    }
+    
+    FOR EACH provider IN llm_manager.providers:
+        status = provider.check_connection()
+        checks.llm_providers.add({
+            name: provider.name,
+            status: status,
+            latency: status.response_time
+        })
+    END FOR
+    
+    checks.database = data_manager.check_connection()
+    checks.processors = processor_registry.list_active_processors()
+    
+    overall_status = ALL(checks.values) == "healthy" ? "healthy" : "degraded"
+    
+    RETURN json({
+        status: overall_status,
+        timestamp: now(),
+        checks: checks
+    })
+END FUNCTION
+```
+
+---
+
+### **2. Orchestrator (`core/orchestrator.py`)**
+
+#### **PURPOSE**
+Central coordinator. Manages query lifecycle, LLM selection, tool calling, context.
+
+#### **MAIN LOGIC FLOW**
+
+```
+FUNCTION process_query(query, session_id, model_preference):
+    INPUT: query string, session_id, optional model_preference
+    OUTPUT: Response object
+    
+    PRE: session_id is valid UUID or new session
+    POST: context updated, response logged
+    
+    LOG query_start(session_id, query)
+    
+    # Step 1: Select LLM provider
+    llm_provider = select_llm_provider(session_id, model_preference)
+    
+    IF NOT llm_provider.is_available():
+        LOG llm_unavailable(llm_provider.name)
+        RETURN fallback_response("LLM service temporarily unavailable")
+    END IF
+    
+    # Step 2: Retrieve conversation context
+    context = context_manager.get_context(session_id)
+    # Returns: {
+    #   history: [last N interactions],
+    #   last_intent: "eligibility_check",
+    #   last_account: "503446",
+    #   metadata: {...}
+    # }
+    
+    # Step 3: Get available tools
+    available_tools = processor_registry.get_all_tools()
+    # Returns: [
+    #   {name: "check_eligibility", description: "...", processor: DigitalLendingProcessor},
+    #   {name: "answer_faq", description: "...", processor: FAQProcessor}
+    # ]
+    
+    # Step 4: LLM decides which tool to use (tool-calling pattern)
+    tool_call = llm_provider.generate_with_tools(
+        query=query,
+        context=context,
+        available_tools=available_tools
+    )
+    # Returns: {
+    #   tool_name: "check_eligibility",
+    #   arguments: {account_number: "503446"},
+    #   confidence: 0.95
+    # }
+    
+    LOG tool_selected(tool_call.tool_name, tool_call.confidence)
+    
+    # Step 5: Execute selected tool/processor
+    processor = processor_registry.get_processor_for_tool(tool_call.tool_name)
+    
+    IF processor is NULL:
+        LOG processor_not_found(tool_call.tool_name)
+        RETURN fallback_response("I'm not sure how to handle that request")
+    END IF
+    
+    response = processor.execute(
+        tool_name=tool_call.tool_name,
+        arguments=tool_call.arguments,
+        context=context,
+        llm_provider=llm_provider
+    )
+    
+    # Step 6: Update context
+    context_manager.update_context(
+        session_id=session_id,
+        query=query,
+        response=response,
+        tool_used=tool_call.tool_name,
+        llm_provider=llm_provider.name
+    )
+    
+    LOG query_complete(session_id, response.status, response.intent)
+    
+    RETURN response
+END FUNCTION
+```
+
+#### **LLM PROVIDER SELECTION LOGIC**
+
+```
+FUNCTION select_llm_provider(session_id, model_preference):
+    INPUT: session_id, optional model_preference
+    OUTPUT: LLM provider instance
+    
+    # Priority order:
+    # 1. Explicit model preference in request
+    # 2. Session-specific override
+    # 3. Global default from config
+    
+    IF model_preference is NOT NULL:
+        provider = llm_manager.get_provider(model_preference.provider)
+        IF provider AND provider.is_available():
+            RETURN provider
+        END IF
+    END IF
+    
+    session_override = context_manager.get_session_llm(session_id)
+    IF session_override:
+        provider = llm_manager.get_provider(session_override)
+        IF provider AND provider.is_available():
+            RETURN provider
+        END IF
+    END IF
+    
+    default_provider = llm_manager.get_default_provider()
+    
+    IF NOT default_provider.is_available():
+        # Try fallback providers
+        FOR EACH provider IN llm_manager.get_fallback_providers():
+            IF provider.is_available():
+                LOG fallback_provider_used(provider.name)
+                RETURN provider
+            END IF
+        END FOR
+        
+        RAISE OrchestratorError("No LLM providers available")
+    END IF
+    
+    RETURN default_provider
+END FUNCTION
+```
+
+---
+
+### **3. LLM Manager (`core/llm/manager.py`)**
+
+#### **PURPOSE**
+Abstraction layer for multiple LLM providers. Enables hot-swapping.
+
+#### **PROVIDER INTERFACE**
+
+```
+ABSTRACT CLASS BaseLLM:
+    ABSTRACT FUNCTION generate(prompt, max_tokens, temperature)
+    ABSTRACT FUNCTION generate_with_tools(query, context, available_tools)
+    ABSTRACT FUNCTION check_connection()
+    ABSTRACT FUNCTION get_available_models()
+END CLASS
+```
+
+#### **MANAGER LOGIC**
+
+```
+CLASS LLMManager:
+    PROPERTIES:
+        providers: Dictionary<string, BaseLLM>
+        default_provider_name: string
+        fallback_order: List<string>
+    
+    FUNCTION register_provider(name, provider_instance):
+        INPUT: provider name, instance of BaseLLM
+        
+        VALIDATE provider implements BaseLLM interface
+        IF NOT valid:
+            RAISE ProviderError("Provider must implement BaseLLM")
+        END IF
+        
+        providers[name] = provider_instance
+        LOG provider_registered(name, provider.model_name)
+    END FUNCTION
+    
+    FUNCTION get_provider(name):
+        INPUT: provider name string
+        OUTPUT: BaseLLM instance or NULL
+        
+        IF name IN providers:
+            RETURN providers[name]
+        ELSE:
+            LOG provider_not_found(name)
+            RETURN NULL
+        END IF
+    END FUNCTION
+    
+    FUNCTION get_default_provider():
+        RETURN providers[default_provider_name]
+    END FUNCTION
+    
+    FUNCTION get_fallback_providers():
+        OUTPUT: List<BaseLLM> in fallback order
+        
+        result = []
+        FOR EACH provider_name IN fallback_order:
+            IF provider_name IN providers:
+                result.add(providers[provider_name])
+            END IF
+        END FOR
+        RETURN result
+    END FUNCTION
+END CLASS
+```
+
+#### **OLLAMA PROVIDER IMPLEMENTATION**
+
+```
+CLASS OllamaLLM EXTENDS BaseLLM:
+    PROPERTIES:
+        host: string (http://localhost:11434)
+        model: string (llama3.2:3b)
+        timeout: integer (120 seconds)
+    
+    FUNCTION generate(prompt, max_tokens, temperature):
+        INPUT: prompt string, max_tokens int, temperature float
+        OUTPUT: generated text string
+        
+        PRE: Ollama service is running
+        POST: returns generated text or raises exception
+        
+        payload = {
+            model: this.model,
+            prompt: prompt,
+            stream: false,
+            options: {
+                temperature: temperature,
+                num_predict: max_tokens
+            }
+        }
+        
+        TRY:
+            response = HTTP_POST(
+                url=f"{this.host}/api/generate",
+                json=payload,
+                timeout=this.timeout
+            )
+            
+            IF response.status_code == 404:
+                RAISE ModelNotFoundError(f"Model '{this.model}' not installed")
+            END IF
+            
+            response.raise_for_status()
+            
+            result = parse_json(response.body)
+            generated_text = result["response"].strip()
+            
+            RETURN generated_text
+            
+        CATCH ConnectionError:
+            RAISE LLMUnavailableError("Ollama service not running")
+        CATCH Timeout:
+            RAISE LLMTimeoutError("Request timed out")
+        END TRY
+    END FUNCTION
+    
+    FUNCTION generate_with_tools(query, context, available_tools):
+        INPUT: query, context dict, available_tools list
+        OUTPUT: {tool_name, arguments, confidence}
+        
+        # Build tool-calling prompt
+        prompt = build_tool_selection_prompt(query, context, available_tools)
+        
+        # Generate with lower temperature for deterministic tool selection
+        response_text = this.generate(prompt, max_tokens=200, temperature=0.3)
+        
+        # Parse LLM response for tool selection
+        tool_call = parse_tool_call_response(response_text)
+        
+        RETURN tool_call
+    END FUNCTION
+    
+    FUNCTION check_connection():
+        OUTPUT: {available, latency, error}
+        
+        start_time = now()
+        
+        TRY:
+            response = HTTP_GET(f"{this.host}/api/tags", timeout=5)
+            latency = (now() - start_time).milliseconds
+            
+            IF response.status_code == 200:
+                models = parse_json(response.body)["models"]
+                model_exists = this.model IN [m["name"] for m in models]
+                
+                RETURN {
+                    available: model_exists,
+                    latency: latency,
+                    error: NULL if model_exists else f"Model {this.model} not found"
+                }
+            ELSE:
+                RETURN {available: false, latency: latency, error: f"HTTP {response.status_code}"}
+            END IF
+            
+        CATCH Exception as e:
+            RETURN {available: false, latency: NULL, error: str(e)}
+        END TRY
+    END FUNCTION
+END CLASS
+```
+
+#### **GEMINI PROVIDER IMPLEMENTATION**
+
+```
+CLASS GeminiLLM EXTENDS BaseLLM:
+    PROPERTIES:
+        api_key: string
+        model: string (gemini-1.5-flash)
+        base_url: string (https://generativelanguage.googleapis.com/v1beta)
+    
+    FUNCTION generate(prompt, max_tokens, temperature):
+        INPUT: prompt, max_tokens, temperature
+        OUTPUT: generated text
+        
+        payload = {
+            contents: [{
+                parts: [{text: prompt}]
+            }],
+            generationConfig: {
+                temperature: temperature,
+                maxOutputTokens: max_tokens
+            }
+        }
+        
+        TRY:
+            response = HTTP_POST(
+                url=f"{this.base_url}/models/{this.model}:generateContent",
+                headers={"x-goog-api-key": this.api_key},
+                json=payload,
+                timeout=30
+            )
+            
+            response.raise_for_status()
+            
+            result = parse_json(response.body)
+            generated_text = result["candidates"][0]["content"]["parts"][0]["text"]
+            
+            RETURN generated_text.strip()
+            
+        CATCH AuthenticationError:
+            RAISE LLMAuthError("Invalid Gemini API key")
+        CATCH RateLimitError:
+            RAISE LLMRateLimitError("Gemini API rate limit exceeded")
+        END TRY
+    END FUNCTION
+    
+    FUNCTION generate_with_tools(query, context, available_tools):
+        # Gemini native function calling
+        
+        functions = []
+        FOR EACH tool IN available_tools:
+            functions.add({
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.parameters_schema
+            })
+        END FOR
+        
+        payload = {
+            contents: [{
+                role: "user",
+                parts: [{text: query}]
+            }],
+            tools: [{
+                function_declarations: functions
+            }]
+        }
+        
+        response = HTTP_POST(...same as above...)
+        
+        # Parse Gemini function call response
+        function_call = result["candidates"][0]["content"]["parts"][0]["functionCall"]
+        
+        RETURN {
+            tool_name: function_call["name"],
+            arguments: function_call["args"],
+            confidence: 0.95  # Gemini doesn't provide confidence
+        }
+    END FUNCTION
+    
+    FUNCTION check_connection():
+        # Similar to Ollama, but checks API key validity
+        
+        TRY:
+            response = HTTP_GET(
+                url=f"{this.base_url}/models",
+                headers={"x-goog-api-key": this.api_key},
+                timeout=5
+            )
+            
+            RETURN {
+                available: response.status_code == 200,
+                latency: measure_latency(),
+                error: NULL if success else response.error
+            }
+        CATCH Exception as e:
+            RETURN {available: false, error: str(e)}
+        END TRY
+    END FUNCTION
+END CLASS
+```
+
+---
+
+### **4. Processor Registry (`processors/base.py` + `processors/registry.py`)**
+
+#### **PURPOSE**
+Plugin system for processors. Auto-discovers processors in `processors/` folder.
+
+#### **BASE PROCESSOR INTERFACE**
+
+```
+ABSTRACT CLASS BaseProcessor:
+    PROPERTIES:
+        name: string
+        description: string
+        tools: List<Tool>
+        validation_level: string ("strict", "light", "none")
+    
+    ABSTRACT FUNCTION get_tools()
+    ABSTRACT FUNCTION execute(tool_name, arguments, context, llm_provider)
+    
+    FUNCTION validate_response(response):
+        INPUT: response object
+        OUTPUT: (is_valid: bool, issues: list)
+        
+        IF this.validation_level == "none":
+            RETURN (true, [])
+        END IF
+        
+        IF this.validation_level == "light":
+            RETURN this._light_validation(response)
+        END IF
+        
+        IF this.validation_level == "strict":
+            RETURN this._strict_validation(response)
+        END IF
+    END FUNCTION
+    
+    FUNCTION _light_validation(response):
+        issues = []
+        
+        IF response.message is empty:
+            issues.add("Response message cannot be empty")
+        END IF
+        
+        IF response.message.length > 5000:
+            issues.add("Response too long (>5000 chars)")
+        END IF
+        
+        RETURN (len(issues) == 0, issues)
+    END FUNCTION
+    
+    FUNCTION _strict_validation(response):
+        # Implemented by specific processors
+        PASS
+    END FUNCTION
+END CLASS
+```
+
+#### **TOOL DEFINITION**
+
+```
+CLASS Tool:
+    PROPERTIES:
+        name: string
+        description: string
+        parameters_schema: Dictionary
+        processor_class: Class
+    
+    CONSTRUCTOR(name, description, parameters_schema, processor_class):
+        this.name = name
+        this.description = description
+        this.parameters_schema = parameters_schema
+        this.processor_class = processor_class
+    END CONSTRUCTOR
+END CLASS
+```
+
+#### **REGISTRY LOGIC**
+
+```
+CLASS ProcessorRegistry:
+    PROPERTIES:
+        processors: Dictionary<string, BaseProcessor>
+        tools_map: Dictionary<string, BaseProcessor>
+    
+    FUNCTION auto_discover_processors():
+        INPUT: None
+        OUTPUT: None (modifies this.processors)
+        
+        PRE: processors folder exists
+        POST: all processors discovered and registered
+        
+        processors_dir = Path("processors/")
+        
+        FOR EACH subfolder IN processors_dir.subdirectories():
+            IF subfolder.name.startswith("_"):
+                CONTINUE  # Skip private folders
+            END IF
+            
+            processor_file = subfolder / "processor.py"
+            IF NOT processor_file.exists():
+                LOG warning(f"No processor.py in {subfolder}")
+                CONTINUE
+            END IF
+            
+            TRY:
+                module = import_module(f"processors.{subfolder.name}.processor")
+                
+                # Find processor class (must inherit from BaseProcessor)
+                FOR EACH class IN module.classes:
+                    IF class inherits from BaseProcessor:
+                        processor_instance = class()
+                        this.register_processor(processor_instance)
+                        LOG processor_discovered(subfolder.name, class.name)
+                        BREAK
+                    END IF
+                END FOR
+                
+            CATCH ImportError as e:
+                LOG error(f"Failed to import {subfolder}: {e}")
+            END TRY
+        END FOR
+        
+        LOG discovery_complete(len(this.processors))
+    END FUNCTION
+    
+    FUNCTION register_processor(processor):
+        INPUT: processor instance
+        
+        VALIDATE processor implements BaseProcessor
+        
+        processor_name = processor.name
+        this.processors[processor_name] = processor
+        
+        # Register all tools from this processor
+        tools = processor.get_tools()
+        FOR EACH tool IN tools:
+            this.tools_map[tool.name] = processor
+            LOG tool_registered(tool.name, processor_name)
+        END FOR
+    END FUNCTION
+    
+    FUNCTION get_processor_for_tool(tool_name):
+        INPUT: tool name string
+        OUTPUT: BaseProcessor instance or NULL
+        
+        IF tool_name IN this.tools_map:
+            RETURN this.tools_map[tool_name]
+        ELSE:
+            RETURN NULL
+        END IF
+    END FUNCTION
+    
+    FUNCTION get_all_tools():
+        OUTPUT: List<Tool>
+        
+        all_tools = []
+        FOR EACH processor IN this.processors.values():
+            tools = processor.get_tools()
+            all_tools.extend(tools)
+        END FOR
+        
+        RETURN all_tools
+    END FUNCTION
+END CLASS
+```
+
+---
+
+### **5. Digital Lending Processor (`processors/digital_lending/processor.py`)**
+
+#### **PURPOSE**
+Handles loan eligibility checks using warehouse.csv and reasons.csv.
+
+#### **PROCESSOR STRUCTURE**
+
+```
+CLASS DigitalLendingProcessor EXTENDS BaseProcessor:
+    PROPERTIES:
+        name = "digital_lending"
+        description = "Handles loan eligibility and ineligibility checks"
+        validation_level = "light"  # Light validation for speed
+        data_manager: DataManager
+        tools: List<Tool>
+    
+    CONSTRUCTOR():
+        this.data_manager = DataManager(
+            warehouse_file="processors/digital_lending/data/warehouse.csv",
+            reasons_file="processors/digital_lending/data/reasons.csv"
+        )
+        
+        this.tools = [
+            Tool(
+                name="check_eligibility",
+                description="Check if customer qualifies for digital loan. Requires account number.",
+                parameters_schema={
+                    account_number: {type: "string", required: true, description: "Customer account number"}
+                },
+                processor_class=this.class
+            ),
+            Tool(
+                name="explain_ineligibility",
+                description="Explain why customer does not have loan limit. Requires account number.",
+                parameters_schema={
+                    account_number: {type: "string", required: true}
+                },
+                processor_class=this.class
+            )
+        ]
+    END CONSTRUCTOR
+    
+    FUNCTION get_tools():
+        RETURN this.tools
+    END FUNCTION
+    
+    FUNCTION execute(tool_name, arguments, context, llm_provider):
+        INPUT: tool_name, arguments dict, context, llm_provider
+        OUTPUT: Response object
+        
+        LOG tool_execution_start(tool_name, arguments)
+        
+        IF tool_name == "check_eligibility":
+            RETURN this._check_eligibility(arguments, context, llm_provider)
+        ELSE IF tool_name == "explain_ineligibility":
+            RETURN this._explain_ineligibility(arguments, context, llm_provider)
+        ELSE:
+            RAISE ProcessorError(f"Unknown tool: {tool_name}")
+        END IF
+    END FUNCTION
+    
+    FUNCTION _check_eligibility(arguments, context, llm_provider):
+        account_number = arguments.get("account_number")
+        
+        IF account_number is NULL:
+            RETURN Response(
+                message="I need an account number to check eligibility",
+                intent="eligibility_check",
+                confidence=0.8,
+                status="missing_data",
+                suggestions=["Check eligibility for account 503446"]
+            )
+        END IF
+        
+        LOG checking_eligibility(account_number)
+        
+        # Step 1: Check warehouse (eligible customers)
+        in_warehouse, account_data = this.data_manager.check_warehouse(account_number)
+        
+        IF in_warehouse:
+            LOG customer_eligible(account_number)
+            
+            # Customer is ELIGIBLE
+            eligibility_data = {
+                is_eligible: true,
+                account_number: account_number,
+                customer_name: account_data.get("customer_name", "Customer"),
+                loan_limits: {
+                    min: account_data.get("min_limit", 5000),
+                    max: account_data.get("max_limit", 50000)
+                }
+            }
+            
+            # Generate natural language response using LLM
+            response_message = this._generate_eligible_response(
+                eligibility_data,
+                llm_provider
+            )
+            
+            RETURN Response(
+                message=response_message,
+                intent="eligibility_check",
+                confidence=0.95,
+                status="success",
+                data=eligibility_data
+            )
+        END IF
+        
+        # Step 2: Not in warehouse, check reasons file
+        LOG customer_not_in_warehouse(account_number)
+        
+        customer_data = this.data_manager.get_customer_data(account_number)
+        
+        IF customer_data is NULL:
+            LOG customer_not_found(account_number)
+            RETURN Response(
+                message=f"Account {account_number} not found in records",
+                intent="eligibility_check",
+                confidence=0.9,
+                status="not_found"
+            )
+        END IF
+        
+        # Step 3: Analyze failed eligibility checks
+        failed_checks = this._analyze_failed_checks(customer_data)
+        
+        LOG customer_ineligible(account_number, len(failed_checks))
+        
+        eligibility_data = {
+            is_eligible: false,
+            account_number: account_number,
+            customer_name: customer_data.get("customer_name"),
+            failed_checks: failed_checks
+        }
+        
+        # Generate natural language response
+        response_message = this._generate_ineligible_response(
+            eligibility_data,
+            llm_provider
+        )
+        
+        RETURN Response(
+            message=response_message,
+            intent="eligibility_check",
+            confidence=0.95,
+            status="success",
+            data=eligibility_data
+        )
+    END FUNCTION
+    
+    FUNCTION _analyze_failed_checks(customer_data):
+        INPUT: customer_data dictionary
+        OUTPUT: List of failed checks with explanations
+        
+        failed_checks = []
+        
+        CHECK_COLUMNS = {
+            "Joint_Check": "Joint account check",
+            "DPD_Arrears_Check_DS": "DPD arrears check",
+            "Elma_check": "Mobile banking setup",
+            "Mandates_Check": "Account mandates",
+            "Classification_Check": "Risk classification",
+            "customer_vintage_Check": "Banking vintage",
+            "Turnover_Check": "Credit turnover consistency"
+            # ... more checks
+        }
+        
+        FOR EACH (column, description) IN CHECK_COLUMNS:
+            value = customer_data.get(column)
+            
+            IF value == "Exclude":
+                explanation = this._get_check_explanation(column, customer_data)
+                supporting_data = this._get_supporting_data(column, customer_data)
+                
+                failed_checks.add({
+                    check_type: column,
+                    description: description,
+                    explanation: explanation,
+                    supporting_data: supporting_data
+                })
+                
+                LOG failed_check(column, explanation)
+            END IF
+        END FOR
+        
+        RETURN failed_checks
+    END FUNCTION
+    
+    FUNCTION _get_check_explanation(check_type, customer_data):
+        INPUT: check_type, customer_data
+        OUTPUT: human-readable explanation string
+        
+        SWITCH check_type:
+            CASE "DPD_Arrears_Check_DS":
+                loan_account = customer_data.get("Loan_Account")
+                arrears_days = customer_data.get("Arrears_Days")
+                
+                RETURN f"Customer has DPD arrears on loan account {loan_account} " +
+                       f"for {arrears_days} days. Must clear arrears and wait 60-day cooling period."
+            
+            CASE "Classification_Check":
+                classification = customer_data.get("RISK_CLASS")
+                RETURN f"Customer classification is {classification}, which does not meet " +
+                       f"minimum threshold (A5 for digital, A7 for mobile). Liaise with RM to upgrade."
+            
+            CASE "Joint_Check":
+                RETURN "This is a joint account. Only individual accounts with sole signatory qualify."
+            
+            CASE "Mandates_Check":
+                mandates = customer_data.get("Mandate")
+                RETURN f"Account mandates show '{mandates}'. Must be SOLE SIGNATORY."
+            
+            CASE "customer_vintage_Check":
+```
+            # Similar to JSONFormatter but adds emoji and AI-specific fields
+            
+            log_data = {
+                timestamp: format_datetime(log_record.created),
+                level: log_record.level_name,
+                component: log_record.module_name.split(".")[-1],
+                message: log_record.message,
+                type: "ai_operation"
+            }
+            
+            # Add emoji based on log type
+            IF "ollama" IN log_record.message.lower():
+                log_data.emoji = "🤖"
+            ELSE IF "gemini" IN log_record.message.lower():
+                log_data.emoji = "✨"
+            ELSE IF "intent" IN log_record.message.lower():
+                log_data.emoji = "🎯"
+            ELSE IF "tool" IN log_record.message.lower():
+                log_data.emoji = "🔧"
+            ELSE:
+                log_data.emoji = "🧠"
+            END IF
+            
+            IF log_record has extra_data:
+                log_data.update(log_record.extra_data)
+            END IF
+            
+            RETURN json_encode(log_data)
+        END FUNCTION
+    END CLASS
+    
+    CLASS SystemFilter:
+        """Filter to exclude AI-related logs from system.log"""
+        
+        FUNCTION filter(log_record):
+            INPUT: log_record
+            OUTPUT: Boolean (true if should log)
+            
+            message_lower = log_record.message.lower()
+            module_lower = log_record.module_name.lower()
+            
+            ai_keywords = ["ollama", "gemini", "llm", "model", "generate", 
+                          "intent", "classification", "tool_call"]
+            
+            ai_modules = ["ollama", "gemini", "llm_manager", "intent_classifier"]
+            
+            # Exclude if contains AI keywords or from AI modules
+            is_ai_log = (
+                any(keyword IN message_lower for keyword IN ai_keywords) OR
+                any(module IN module_lower for module IN ai_modules)
+            )
+            
+            RETURN NOT is_ai_log
+        END FUNCTION
+    END CLASS
+    
+    CLASS AIFilter:
+        """Filter to only allow AI-related logs in ai_operations.log"""
+        
+        FUNCTION filter(log_record):
+            INPUT: log_record
+            OUTPUT: Boolean (true if should log)
+            
+            message_lower = log_record.message.lower()
+            module_lower = log_record.module_name.lower()
+            
+            ai_keywords = ["ollama", "gemini", "llm", "model", "generate", 
+                          "intent", "classification", "tool_call", "prompt"]
+            
+            ai_modules = ["ollama", "gemini", "llm_manager", "intent_classifier"]
+            
+            # Include only if contains AI keywords or from AI modules
+            is_ai_log = (
+                any(keyword IN message_lower for keyword IN ai_keywords) OR
+                any(module IN module_lower for module IN ai_modules)
+            )
+            
+            RETURN is_ai_log
+        END FUNCTION
+    END CLASS
+    
+    # Helper logging functions for common patterns
+    
+    FUNCTION log_query_start(logger, session_id, query):
+        logger.info(f"Query started", extra={
+            session_id: session_id,
+            query_preview: query[:100],
+            type: "query_start"
+        })
+    END FUNCTION
+    
+    FUNCTION log_llm_call(logger, provider, model, prompt_length, response_length, duration):
+        logger.debug(f"LLM call completed", extra={
+            provider: provider,
+            model: model,
+            prompt_length: prompt_length,
+            response_length: response_length,
+            duration_ms: duration,
+            type: "llm_call"
+        })
+    END FUNCTION
+    
+    FUNCTION log_tool_execution(logger, tool_name, arguments, success):
+        logger.info(f"Tool execution", extra={
+            tool_name: tool_name,
+            arguments: arguments,
+            success: success,
+            type: "tool_execution"
+        })
+    END FUNCTION
+    
+    FUNCTION log_data_access(logger, operation, identifier, found):
+        logger.debug(f"Data access", extra={
+            operation: operation,
+            identifier: identifier,
+            found: found,
+            type: "data_access"
+        })
+    END FUNCTION
+    
+    FUNCTION log_error_with_context(logger, error, context):
+        logger.error(f"Error occurred: {error.message}", extra={
+            error_type: error.type,
+            error_message: error.message,
+            context: context,
+            stack_trace: error.stack_trace,
+            type: "error"
+        }, exc_info=true)
+    END FUNCTION
+END MODULE
+```
+
+---
+
+### **10. Configuration Management (`config.yaml` + `utils/config.py`)**
+
+#### **PURPOSE**
+Centralized configuration with environment variable support.
+
+#### **CONFIG FILE STRUCTURE (config.yaml)**
+
+```yaml
+# Safina Lite Configuration
+
+app:
+  name: "Safina Lite"
+  version: "2.0.0"
+  environment: "development"  # development, staging, production
+
+api:
+  host: "0.0.0.0"
+  port: 5000
+  debug: true
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://localhost:5000"
+
+llm:
+  default_provider: "ollama"
+  fallback_order:
+    - "gemini"
+  
+  providers:
+    ollama:
+      host: "http://localhost:11434"
+      model: "llama3.2:3b"
+      timeout: 120
+      enabled: true
+    
+    gemini:
+      api_key: "${GEMINI_API_KEY}"  # From environment variable
+      model: "gemini-1.5-flash"
+      timeout: 30
+      enabled: true
+
+processors:
+  enabled:
+    - "digital_lending"
+    - "faq"
+    - "general_inquiry"
+  
+  digital_lending:
+    validation_level: "light"
+    cache_ttl: 86400  # 24 hours
+  
+  faq:
+    validation_level: "light"
+    min_similarity: 0.35
+
+context:
+  max_history: 10  # interactions per session
+  session_timeout: 7200  # 2 hours in seconds
+
+logging:
+  level: "DEBUG"
+  session_duration: 7200  # 2 hours
+  base_directory: "logs/"
+  format: "json"
+  
+data:
+  cache_enabled: true
+  cache_directory: "cache/"
+
+performance:
+  enable_metrics: true
+  slow_query_threshold: 3.0  # seconds
+```
+
+#### **CONFIG LOADER LOGIC**
+
+```
+CLASS Config:
+    PROPERTIES:
+        config_data: Dictionary
+        env_vars: Dictionary
+    
+    CONSTRUCTOR(config_file="config.yaml"):
+        this.config_data = this._load_yaml(config_file)
+        this.env_vars = this._load_env_vars()
+        this._substitute_env_vars()
+    END CONSTRUCTOR
+    
+    FUNCTION _load_yaml(config_file):
+        INPUT: path to config.yaml
+        OUTPUT: parsed dictionary
+        
+        IF NOT file_exists(config_file):
+            RAISE ConfigError(f"Config file not found: {config_file}")
+        END IF
+        
+        WITH open(config_file) as f:
+            data = parse_yaml(f.read())
+        END WITH
+        
+        RETURN data
+    END FUNCTION
+    
+    FUNCTION _load_env_vars():
+        OUTPUT: Dictionary of environment variables
+        
+        # Load from .env file if exists
+        env_file = Path(".env")
+        IF env_file.exists():
+            load_dotenv(env_file)
+        END IF
+        
+        RETURN os.environ
+    END FUNCTION
+    
+    FUNCTION _substitute_env_vars():
+        INPUT: None (modifies this.config_data)
+        
+        # Recursively substitute ${VAR_NAME} with environment variable values
+        this.config_data = this._recursive_substitute(this.config_data)
+    END FUNCTION
+    
+    FUNCTION _recursive_substitute(obj):
+        INPUT: object (dict, list, string, etc.)
+        OUTPUT: object with substitutions
+        
+        IF obj is Dictionary:
+            result = {}
+            FOR EACH (key, value) IN obj.items():
+                result[key] = this._recursive_substitute(value)
+            END FOR
+            RETURN result
+        
+        ELSE IF obj is List:
+            result = []
+            FOR EACH item IN obj:
+                result.add(this._recursive_substitute(item))
+            END FOR
+            RETURN result
+        
+        ELSE IF obj is String:
+            # Check for ${VAR_NAME} pattern
+            IF obj.matches(r'\$\{([A-Z_]+)\}'):
+                var_name = extract_var_name(obj)
+                
+                IF var_name IN this.env_vars:
+                    RETURN this.env_vars[var_name]
+                ELSE:
+                    LOG warning(f"Environment variable not found: {var_name}")
+                    RETURN obj
+                END IF
+            ELSE:
+                RETURN obj
+            END IF
+        
+        ELSE:
+            RETURN obj
+        END IF
+    END FUNCTION
+    
+    FUNCTION get(key_path, default=NULL):
+        INPUT: dot-notation key path (e.g., "llm.providers.ollama.host")
+        OUTPUT: value or default
+        
+        keys = key_path.split(".")
+        current = this.config_data
+        
+        FOR EACH key IN keys:
+            IF current is Dictionary AND key IN current:
+                current = current[key]
+            ELSE:
+                RETURN default
+            END IF
+        END FOR
+        
+        RETURN current
+    END FUNCTION
+    
+    FUNCTION set(key_path, value):
+        INPUT: dot-notation key path, value
+        
+        keys = key_path.split(".")
+        current = this.config_data
+        
+        FOR i = 0 TO len(keys) - 2:
+            key = keys[i]
+            IF key NOT IN current:
+                current[key] = {}
+            END IF
+            current = current[key]
+        END FOR
+        
+        current[keys[-1]] = value
+    END FUNCTION
+    
+    FUNCTION validate():
+        INPUT: None
+        OUTPUT: (is_valid: bool, errors: list)
+        
+        errors = []
+        
+        # Required configurations
+        required_keys = [
+            "app.name",
+            "api.host",
+            "api.port",
+            "llm.default_provider",
+            "logging.base_directory"
+        ]
+        
+        FOR EACH key IN required_keys:
+            IF this.get(key) is NULL:
+                errors.add(f"Missing required configuration: {key}")
+            END IF
+        END FOR
+        
+        # Validate LLM providers
+        default_provider = this.get("llm.default_provider")
+        providers = this.get("llm.providers", {})
+        
+        IF default_provider NOT IN providers:
+            errors.add(f"Default provider '{default_provider}' not configured")
+        END IF
+        
+        FOR EACH (provider_name, provider_config) IN providers.items():
+            IF provider_config.get("enabled", false):
+                IF provider_name == "ollama":
+                    IF NOT provider_config.get("host"):
+                        errors.add("Ollama host not configured")
+                    END IF
+                    IF NOT provider_config.get("model"):
+                        errors.add("Ollama model not configured")
+                    END IF
+                
+                ELSE IF provider_name == "gemini":
+                    IF NOT provider_config.get("api_key"):
+                        errors.add("Gemini API key not configured")
+                    END IF
+                END IF
+            END IF
+        END FOR
+        
+        RETURN (len(errors) == 0, errors)
+    END FUNCTION
+END CLASS
+
+# Global config instance
+GLOBAL config = Config("config.yaml")
+```
+
+---
+
+### **11. Tool-Calling Prompt Logic**
+
+#### **PURPOSE**
+Generate prompts for LLM to decide which tool to use.
+
+#### **PROMPT BUILDING LOGIC**
+
+```
+FUNCTION build_tool_selection_prompt(query, context, available_tools):
+    INPUT: query, context, available_tools list
+    OUTPUT: formatted prompt string
+    
+    # Build tool descriptions
+    tool_descriptions = []
+    FOR EACH tool IN available_tools:
+        description = f"""
+Tool: {tool.name}
+Description: {tool.description}
+Parameters: {format_parameters(tool.parameters_schema)}
+"""
+        tool_descriptions.add(description)
+    END FOR
+    
+    tools_text = join(tool_descriptions, "\n")
+    
+    # Build context summary
+    context_text = ""
+    IF context.history_length > 0:
+        context_text = f"""
+Previous Context:
+- Last intent: {context.last_intent}
+- Last account: {context.last_account or "None"}
+- Conversation history: {context.history_length} interactions
+"""
+    END IF
+    
+    # Build main prompt
+    prompt = f"""You are Safina, an AI assistant for NCBA Bank staff handling digital lending queries.
+
+{context_text}
+
+Available Tools:
+{tools_text}
+
+User Query: "{query}"
+
+Based on the query, select the most appropriate tool to use. Analyze the query to:
+1. Determine if it's asking about a SPECIFIC customer (requires account number) or GENERAL information
+2. Identify if an account number is present in the query
+3. Choose the tool that best matches the query intent
+
+Respond with ONLY a JSON object in this exact format:
+{{
+    "tool_name": "tool_name_here",
+    "arguments": {{
+        "parameter_name": "value"
+    }},
+    "reasoning": "brief explanation of why this tool was chosen"
+}}
+
+Important rules:
+- If query mentions a specific account number, use check_eligibility or explain_ineligibility
+- If query is general (no account number), use answer_faq
+- Extract account numbers from patterns like: "account 503446", "customer 558108", "503446", etc.
+- If unsure, prefer answer_faq for general questions
+
+JSON Response:"""
+
+    RETURN prompt
+END FUNCTION
+
+FUNCTION parse_tool_call_response(response_text):
+    INPUT: LLM response string
+    OUTPUT: {tool_name, arguments, confidence}
+    
+    # Extract JSON from response
+    json_match = extract_json(response_text)
+    
+    IF json_match is NULL:
+        LOG warning("Failed to parse tool call response, using fallback")
+        RETURN {
+            tool_name: "answer_faq",
+            arguments: {},
+            confidence: 0.5
+        }
+    END IF
+    
+    TRY:
+        data = parse_json(json_match)
+        
+        tool_name = data.get("tool_name", "answer_faq")
+        arguments = data.get("arguments", {})
+        reasoning = data.get("reasoning", "")
+        
+        # Calculate confidence based on reasoning clarity
+        confidence = 0.85
+        IF reasoning and len(reasoning) > 20:
+            confidence = 0.95
+        END IF
+        
+        LOG tool_selected(tool_name, confidence, reasoning)
+        
+        RETURN {
+            tool_name: tool_name,
+            arguments: arguments,
+            confidence: confidence
+        }
+    
+    CATCH JsonParseError:
+        LOG error("Invalid JSON in tool call response")
+        RETURN {
+            tool_name: "answer_faq",
+            arguments: {},
+            confidence: 0.5
+        }
+    END TRY
+END FUNCTION
+
+FUNCTION format_parameters(parameters_schema):
+    INPUT: parameters schema dictionary
+    OUTPUT: formatted string
+    
+    params = []
+    FOR EACH (param_name, param_info) IN parameters_schema.items():
+        required = param_info.get("required", false)
+        param_type = param_info.get("type", "string")
+        description = param_info.get("description", "")
+        
+        required_marker = "[REQUIRED]" IF required ELSE "[OPTIONAL]"
+        
+        params.add(f"  - {param_name} ({param_type}) {required_marker}: {description}")
+    END FOR
+    
+    RETURN join(params, "\n")
+END FUNCTION
+```
+
+---
+
+### **12. Response Object (`models/response.py`)**
+
+#### **PURPOSE**
+Standardized response structure for all processors.
+
+#### **STRUCTURE**
+
+```
+CLASS Response:
+    PROPERTIES:
+        message: string
+        intent: string
+        confidence: float (0.0 to 1.0)
+        status: string ("success", "error", "missing_data", "not_found")
+        data: Dictionary or NULL
+        suggestions: List<string>
+        metadata: Dictionary
+    
+    CONSTRUCTOR(message, intent, confidence, status="success", data=NULL, suggestions=NULL, metadata=NULL):
+        this.message = message
+        this.intent = intent
+        this.confidence = confidence
+        this.status = status
+        this.data = data or {}
+        this.suggestions = suggestions or []
+        this.metadata = metadata or {}
+        this.timestamp = now()
+    END CONSTRUCTOR
+    
+    FUNCTION to_dict():
+        OUTPUT: Dictionary representation
+        
+        RETURN {
+            message: this.message,
+            intent: this.intent,
+            confidence: this.confidence,
+            status: this.status,
+            data: this.data,
+            suggestions: this.suggestions,
+            metadata: this.metadata,
+            timestamp: this.timestamp.isoformat()
+        }
+    END FUNCTION
+    
+    FUNCTION is_success():
+        RETURN this.status == "success"
+    END FUNCTION
+    
+    FUNCTION has_data():
+        RETURN this.data is NOT NULL AND len(this.data) > 0
+    END FUNCTION
+END CLASS
+```
+
+---
+
+### **13. Error Handling Strategy**
+
+#### **HIERARCHICAL ERROR HANDLING**
+
+```
+# Custom Exception Hierarchy
+
+CLASS SafinaError(Exception):
+    """Base exception for all Safina errors"""
+    PROPERTIES:
+        message: string
+        error_code: string
+        context: Dictionary
+    END CLASS
+
+CLASS OrchestratorError(SafinaError):
+    """Errors from orchestrator layer"""
+    END CLASS
+
+CLASS LLMError(SafinaError):
+    """Base for all LLM-related errors"""
+    END CLASS
+
+CLASS LLMUnavailableError(LLMError):
+    """LLM service not available"""
+    error_code = "LLM_UNAVAILABLE"
+    END CLASS
+
+CLASS LLMTimeoutError(LLMError):
+    """LLM request timed out"""
+    error_code = "LLM_TIMEOUT"
+    END CLASS
+
+CLASS ModelNotFoundError(LLMError):
+    """Requested model not installed"""
+    error_code = "MODEL_NOT_FOUND"
+    END CLASS
+
+CLASS ProcessorError(SafinaError):
+    """Errors from processor execution"""
+    END CLASS
+
+CLASS DataError(SafinaError):
+    """Data access/loading errors"""
+    END CLASS
+
+CLASS ValidationError(SafinaError):
+    """Response validation errors"""
+    END CLASS
+
+# Error Handling Pattern
+
+FUNCTION handle_error(error, context):
+    INPUT: error exception, context dict
+    OUTPUT: Response object
+    
+    LOG error_with_context(error, context)
+    
+    IF error is LLMUnavailableError:
+        RETURN Response(
+            message="I'm currently experiencing technical difficulties with the AI service. Please try again in a moment.",
+            intent="error",
+            confidence=0.0,
+            status="error",
+            metadata={error_code: error.error_code}
+        )
+    
+    ELSE IF error is LLMTimeoutError:
+        RETURN Response(
+            message="The request took too long to process. Please try again with a simpler query.",
+            intent="error",
+            confidence=0.0,
+            status="error",
+            metadata={error_code: error.error_code}
+        )
+    
+    ELSE IF error is ModelNotFoundError:
+        RETURN Response(
+            message="The AI model is not properly configured. Please contact support.",
+            intent="error",
+            confidence=0.0,
+            status="error",
+            metadata={error_code: error.error_code}
+        )
+    
+    ELSE IF error is ProcessorError:
+        RETURN Response(
+            message="I encountered an error processing your request. Please try rephrasing your query.",
+            intent="error",
+            confidence=0.0,
+            status="error",
+            metadata={error_code: error.error_code}
+        )
+    
+    ELSE IF error is DataError:
+        RETURN Response(
+            message="I'm having trouble accessing the required data. Please try again later.",
+            intent="error",
+            confidence=0.0,
+            status="error",
+            metadata={error_code: error.error_code}
+        )
+    
+    ELSE:
+        # Generic error fallback
+        RETURN Response(
+            message="An unexpected error occurred. Please try again or contact support if the issue persists.",
+            intent="error",
+            confidence=0.0,
+            status="error",
+            metadata={error_code: "UNKNOWN_ERROR"}
+        )
+    END IF
+END FUNCTION
+```
+
+---
+
+### **14. Startup Initialization Logic**
+
+#### **APPLICATION BOOTSTRAP**
+
+```
+FUNCTION initialize_application():
+    INPUT: None
+    OUTPUT: None (initializes all components)
+    
+    PRINT "=" * 60
+    PRINT "Safina Lite - Initializing..."
+    PRINT "=" * 60
+    
+    # Step 1: Load and validate configuration
+    PRINT "Loading configuration..."
+    config = Config("config.yaml")
+    is_valid, errors = config.validate()
+    
+    IF NOT is_valid:
+        FOR EACH error IN errors:
+            PRINT f"ERROR: {error}"
+        END FOR
+        EXIT(1)
+    END IF
+    
+    PRINT "✓ Configuration loaded"
+    
+    # Step 2: Setup logging
+    PRINT "Setting up logging..."
+    logger = setup_logger("safina")
+    PRINT f"✓ Logs directory: {config.get('logging.base_directory')}"
+    
+    # Step 3: Initialize LLM Manager
+    PRINT "Initializing LLM providers..."
+    llm_manager = LLMManager()
+    
+    providers_config = config.get("llm.providers", {})
+    FOR EACH (provider_name, provider_config) IN providers_config.items():
+        IF provider_config.get("enabled", false):
+            TRY:
+                IF provider_name == "ollama":
+                    provider = OllamaLLM(
+                        host=provider_config["host"],
+                        model=provider_config["model"],
+                        timeout=provider_config["timeout"]
+                    )
+                
+                ELSE IF provider_name == "gemini":
+                    provider = GeminiLLM(
+                        api_key=provider_config["api_key"],
+                        model=provider_config["model"],
+                        timeout=provider_config["timeout"]
+                    )
+                
+                ELSE:
+                    LOG warning(f"Unknown provider: {provider_name}")
+                    CONTINUE
+                END IF
+                
+                llm_manager.register_provider(provider_name, provider)
+                
+                # Check connection
+                connection_status = provider.check_connection()
+                IF connection_status["available"]:
+                    PRINT f"✓ {provider_name}: Connected ({connection_status['latency']}ms)"
+                ELSE:
+                    PRINT f"⚠ {provider_name}: Not available - {connection_status['error']}"
+                END IF
+                
+            CATCH Exception as e:
+                LOG error(f"Failed to initialize {provider_name}: {e}")
+                PRINT f"✗ {provider_name}: Failed - {e}"
+            END TRY
+        END IF
+    END FOR
+    
+    # Set default provider
+    default_provider_name = config.get("llm.default_provider")
+    llm_manager.set_default_provider(default_provider_name)
+    PRINT f"✓ Default provider: {default_provider_name}"
+    
+    # Step 4: Initialize Processor Registry
+    PRINT "Discovering processors..."
+    processor_registry = ProcessorRegistry()
+    processor_registry.auto_discover_processors()
+    
+    discovered_processors = processor_registry.list_processors()
+    PRINT f"✓ Discovered {len(discovered_processors)} processors:"
+    FOR EACH processor_name IN discovered_processors:
+        processor = processor_registry.get_processor(processor_name)
+        tools = processor.get_tools()
+        PRINT f"  - {processor_name}: {len(tools)} tools"
+    END FOR
+    
+    # Step 5: Initialize Context Manager
+    PRINT "Initializing context manager..."
+    context_manager = ContextManager()
+    PRINT f"✓ Context manager ready (max history: {config.get('context.max_history')})"
+    
+    # Step 6: Initialize Orchestrator
+    PRINT "Initializing orchestrator..."
+    orchestrator = QueryOrchestrator(
+        llm_manager=llm_manager,
+        processor_registry=processor_registry,
+        context_manager=context_manager,
+        config=config
+    )
+    PRINT "✓ Orchestrator ready"
+    
+    # Step 7: Initialize Flask API
+    PRINT "Starting Flask API..."
+    api_host = config.get("api.host")
+    api_port = config.get("api.port")
+    api_debug = config.get("api.debug")
+    
+    flask_app = create_flask_app(orchestrator, config)
+    
+    PRINT "=" * 60
+    PRINT f"✓ Safina Lite initialized successfully!"
+    PRINT f"  API: http://{api_host}:{api_port}"
+    PRINT f"  Environment: {config.get('app.environment')}"
+    PRINT f"  Version: {config.get('app.version')}"
+    PRINT "=" * 60
+    
+    # Start Flask server
+    flask_app.run(
+        host=api_host,
+        port=api_port,
+        debug=api_debug
+    )
+END FUNCTION
+```
+
+---
+
+### **15. Complete Query Flow Summary**
+
+#### **END-TO-END LOGIC**
+
+```
+USER QUERY: "Check eligibility for account 503446"
+
+↓
+
+STEP 1: API Reception (app.py)
+- Validate request format
+- Extract: query="Check eligibility for account 503446", session_id="session_123"
+- Log: query_received(session_id, query_preview)
+- Pass to Orchestrator
+
+↓
+
+STEP 2: Orchestrator Processing (orchestrator.py)
+- Select LLM provider (default: Ollama)
+- Check LLM availability → Connected
+- Get context: {history_length: 0, last_intent: NULL, last_account: NULL}
+- Get available tools: [check_eligibility, explain_ineligibility, answer_faq]
+- Build tool-calling prompt with query + tools
+- Call LLM.generate_with_tools()
+
+↓
+
+STEP 3: LLM Tool Selection (ollama.py)
+- Send prompt to Ollama API
+- Ollama analyzes query and available tools
+- Returns: {
+    tool_name: "check_eligibility",
+    arguments: {account_number: "503446"},
+    confidence: 0.95
+  }
+- Log: tool_selected("check_eligibility", 0.95)
+
+↓
+
+STEP 4: Processor Execution (digital_lending/processor.py)
+- Registry routes to DigitalLendingProcessor
+- Execute tool: check_eligibility(account_number="503446")
+- Step 4a: Check warehouse.csv via DataManager
+  - Query SQLite cache: SELECT * FROM warehouse WHERE account_number = '503446'
+  - Result: NOT FOUND in warehouse
+- Step 4b: Check reasons.csv via DataManager
+  - Query SQLite cache: SELECT * FROM reasons WHERE account_number = '503446'
+  - Result: FOUND customer data
+- Step 4c: Analyze failed checks
+  - Check column: DPD_Arrears_Check_DS = "Exclude"
+  - Check column: Classification_Check = "Exclude"
+  - Generate explanations for each failed check
+  - Result: {
+      is_eligible: false,
+      failed_checks: [
+        {check_type: "DPD_Arrears_Check_DS", explanation: "..."},
+        {check_type: "Classification_Check", explanation: "..."}
+      ]
+    }
+- Step 4d: Generate natural language response
+  - Build prompt with failed_checks data
+  - Call LLM.generate() for formatted response
+  - Result: "Good Afternoon,\n\n**Digital Loan Status: NOT ELIGIBLE**\n\n..."
+
+↓
+
+STEP 5: Response Construction
+- Create Response object:
+  {
+    message: "Good Afternoon...",
+    intent: "eligibility_check",
+    confidence: 0.95,
+    status: "success",
+    data: {account_number: "503446", is_eligible: false, failed_checks: [...]}
+  }
+- Validate response (light validation)
+- Log: query_complete(session_id, "success", "eligibility_check")
+
+↓
+
+STEP 6: Context Update (context_manager.py)
+- Create Interaction record:
+  {
+    timestamp: now(),
+    query: "Check eligibility for account 503446",
+    response_message: "Good Afternoon...",
+    intent: "eligibility_check",
+    tool_used: "check_eligibility",
+    account_number: "503446"
+  }
+- Add to session history (sliding window, max 10)
+- Update last_accessed timestamp
+
+↓
+
+STEP 7: API Response (app.py)
+- Convert Response to JSON
+- Return to frontend:
+  {
+    message: "Good Afternoon...",
+    intent: "eligibility_check",
+    confidence: 0.95,
+    data: {...},
+    suggestions: [],
+    status: "success"
+  }
+
+↓
+
+STEP 8: Frontend Display (index.html)
+- Hide typing indicator
+- Create assistant message bubble
+- Format message (bold, line breaks)
+- Animate message appearance
+- Scroll to bottom
+- Re-enable input
+
+↓
+
+DONE
+Total time: ~2-3 seconds
+```
+
+---
+
+### **16. Directory Structure**
+
+```
+safina-lite/
+├── config.yaml                 # Main configuration
+├── .env                        # Environment variables (secrets)
+├── requirements.txt            # Python dependencies
+├── main.py                     # Application entry point
+│
+├── api/
+│   ├── __init__.py
+│   └── app.py                  # Flask API endpoints
+│
+├── core/
+│   ├── __init__.py
+│   ├── orchestrator.py         # Main query coordinator
+│   ├── context_manager.py      # Session & history management
+│   │
+│   └── llm/
+│       ├── __init__.py
+│       ├── base.py             # BaseLLM interface
+│       ├── manager.py          # LLM provider manager
+│       ├── ollama.py           # Ollama implementation
+│       └── gemini.py           # Gemini implementation
+│
+├── processors/
+│   ├── __init__.py
+│   ├── base.py                 # BaseProcessor interface
+│   ├── registry.py             # Processor discovery & routing
+│   │
+│   ├── digital_lending/
+│   │   ├── __init__.py
+│   │   ├── processor.py        # Main processor logic
+│   │   ├── data_manager.py     # CSV/SQLite data handling
+│   │   ├── data/
+│   │   │   ├── warehouse.csv
+│   │   │   └── reasons.csv
+│   │   ├── cache/
+│   │   │   └── lending_cache.db  # SQLite cache (auto-generated)
+│   │   └── prompts/
+│   │       └── templates.yaml
+│   │
+│   ├── faq/
+│   │   ├── __init__.py
+│   │   ├── processor.py
+│   │   └── data/
+│   │       └── faqs.json
+│   │
+│   └── general_inquiry/
+│       ├── __init__.py
+│       └── processor.py
+│
+├── models/
+│   ├── __init__.py
+│   └── response.py             # Response data structure
+│
+├── utils/
+│   ├── __init__.py
+```
+│   ├── logger.py               # Session-based logging
+│   ├── config.py               # Config loader
+│   ├── validators.py           # Input validation utilities
+│   └── helpers.py              # Common helper functions
+│
+├── frontend/
+│   ├── index.html              # Single-page chat interface
+│   └── assets/
+│       ├── styles.css          # (optional - can be inline)
+│       └── app.js              # (optional - can be inline)
+│
+├── logs/                       # Auto-generated log sessions
+│   ├── session--10-26-25--14-30/
+│   │   ├── system.log
+│   │   └── ai_operations.log
+│   └── session--10-26-25--16-45/
+│       ├── system.log
+│       └── ai_operations.log
+│
+├── cache/                      # Auto-generated caches
+│   └── (processor-specific caches)
+│
+├── tests/                      # Test suite
+│   ├── __init__.py
+│   ├── test_orchestrator.py
+│   ├── test_processors.py
+│   ├── test_llm_providers.py
+│   └── fixtures/
+│       ├── sample_queries.json
+│       └── test_data.csv
+│
+└── docs/                       # Documentation
+    ├── architecture.md
+    ├── adding_processors.md
+    ├── adding_llm_providers.md
+    └── api_reference.md
+```
+
+---
+
+## 🔧 **17. Deployment & Operations Logic**
+
+### **A. Health Monitoring**
+
+```
+FUNCTION comprehensive_health_check():
+    OUTPUT: health status dictionary
+    
+    health = {
+        status: "healthy",
+        timestamp: now().isoformat(),
+        components: {}
+    }
+    
+    # Check API
+    health.components.api = {
+        status: "healthy",
+        uptime_seconds: (now() - app_start_time).total_seconds()
+    }
+    
+    # Check LLM Providers
+    health.components.llm_providers = {}
+    FOR EACH (provider_name, provider) IN llm_manager.providers.items():
+        status = provider.check_connection()
+        health.components.llm_providers[provider_name] = status
+        
+        IF NOT status.available:
+            health.status = "degraded"
+        END IF
+    END FOR
+    
+    # Check Processors
+    health.components.processors = {}
+    FOR EACH processor_name IN processor_registry.list_processors():
+        processor = processor_registry.get_processor(processor_name)
+        
+        TRY:
+            # Test processor initialization
+            tools = processor.get_tools()
+            health.components.processors[processor_name] = {
+                status: "healthy",
+                tool_count: len(tools)
+            }
+        CATCH Exception as e:
+            health.components.processors[processor_name] = {
+                status: "unhealthy",
+                error: str(e)
+            }
+            health.status = "degraded"
+        END TRY
+    END FOR
+    
+    # Check Data Caches
+    health.components.data_caches = {}
+    FOR EACH processor IN processor_registry.processors.values():
+        IF processor has data_manager:
+            cache_status = processor.data_manager.check_cache_health()
+            health.components.data_caches[processor.name] = cache_status
+        END IF
+    END FOR
+    
+    # Check Logging System
+    health.components.logging = {
+        status: "healthy" IF _current_session_dir exists ELSE "unhealthy",
+        current_session: _current_session_dir.name IF _current_session_dir ELSE NULL,
+        session_age_seconds: (now() - _session_start_time).total_seconds() IF _session_start_time ELSE NULL
+    }
+    
+    RETURN health
+END FUNCTION
+```
+
+### **B. Graceful Shutdown**
+
+```
+FUNCTION graceful_shutdown(signal_received):
+    INPUT: shutdown signal (SIGTERM, SIGINT, etc.)
+    
+    LOG info("Shutdown signal received, starting graceful shutdown...")
+    
+    # Step 1: Stop accepting new requests
+    LOG info("Stopping API from accepting new requests")
+    flask_app.stop_accepting_requests()
+    
+    # Step 2: Wait for in-flight requests to complete (max 30 seconds)
+    LOG info("Waiting for in-flight requests to complete...")
+    timeout = 30
+    start_time = now()
+    
+    WHILE flask_app.has_active_requests() AND (now() - start_time).seconds < timeout:
+        sleep(0.5)
+    END WHILE
+    
+    IF flask_app.has_active_requests():
+        LOG warning("Forcing shutdown with active requests")
+    ELSE:
+        LOG info("All requests completed")
+    END IF
+    
+    # Step 3: Flush context manager sessions to disk (optional)
+    LOG info("Saving session data...")
+    context_manager.save_sessions_to_disk()
+    
+    # Step 4: Close database connections
+    LOG info("Closing database connections...")
+    FOR EACH processor IN processor_registry.processors.values():
+        IF processor has data_manager:
+            processor.data_manager.close_connections()
+        END IF
+    END FOR
+    
+    # Step 5: Flush logs
+    LOG info("Flushing logs...")
+    FOR EACH handler IN _session_handlers:
+        handler.flush()
+        handler.close()
+    END FOR
+    
+    LOG info("Graceful shutdown complete")
+    EXIT(0)
+END FUNCTION
+```
+
+### **C. Performance Metrics Collection**
+
+```
+FUNCTION collect_performance_metrics():
+    OUTPUT: metrics dictionary
+    
+    metrics = {
+        timestamp: now().isoformat(),
+        queries: {},
+        llm: {},
+        processors: {},
+        system: {}
+    }
+    
+    # Query metrics
+    metrics.queries = {
+        total_queries: query_counter.get_total(),
+        queries_per_minute: query_counter.get_rate_per_minute(),
+        average_response_time: query_timer.get_average(),
+        p95_response_time: query_timer.get_percentile(95),
+        p99_response_time: query_timer.get_percentile(99),
+        error_rate: error_counter.get_rate()
+    }
+    
+    # LLM metrics
+    metrics.llm = {}
+    FOR EACH provider_name IN llm_manager.providers.keys():
+        metrics.llm[provider_name] = {
+            total_calls: llm_call_counter[provider_name].get_total(),
+            average_latency: llm_timer[provider_name].get_average(),
+            error_count: llm_error_counter[provider_name].get_total()
+        }
+    END FOR
+    
+    # Processor metrics
+    metrics.processors = {}
+    FOR EACH processor_name IN processor_registry.list_processors():
+        metrics.processors[processor_name] = {
+            invocations: processor_counter[processor_name].get_total(),
+            average_execution_time: processor_timer[processor_name].get_average(),
+            success_rate: processor_success_rate[processor_name].get_rate()
+        }
+    END FOR
+    
+    # System metrics
+    metrics.system = {
+        memory_usage_mb: get_memory_usage(),
+        cpu_percent: get_cpu_usage(),
+        active_sessions: len(context_manager.sessions),
+        cache_hit_rate: cache_hit_counter.get_rate()
+    }
+    
+    RETURN metrics
+END FUNCTION
+```
+
+---
+
+## 🧪 **18. Testing Strategy**
+
+### **A. Unit Test Structure**
+
+```
+# Test LLM Providers
+CLASS TestOllamaProvider:
+    
+    FUNCTION test_generate():
+        provider = OllamaLLM(host="http://localhost:11434", model="llama3.2:3b")
+        
+        WITH mock_http_post(return_value={"response": "Test response"}):
+            result = provider.generate("Test prompt")
+            
+            ASSERT result == "Test response"
+            ASSERT mock_http_post.called_with(url="http://localhost:11434/api/generate")
+        END WITH
+    END FUNCTION
+    
+    FUNCTION test_connection_failure():
+        provider = OllamaLLM(host="http://localhost:11434", model="llama3.2:3b")
+        
+        WITH mock_http_post(side_effect=ConnectionError):
+            TRY:
+                provider.generate("Test")
+                FAIL("Should have raised LLMUnavailableError")
+            CATCH LLMUnavailableError as e:
+                ASSERT "Ollama service not running" IN str(e)
+            END TRY
+        END WITH
+    END FUNCTION
+END CLASS
+
+# Test Processors
+CLASS TestDigitalLendingProcessor:
+    
+    FUNCTION setup():
+        this.data_manager = MockDataManager()
+        this.llm_provider = MockLLMProvider()
+        this.processor = DigitalLendingProcessor()
+        this.processor.data_manager = this.data_manager
+    END FUNCTION
+    
+    FUNCTION test_check_eligibility_eligible():
+        # Setup mock data
+        this.data_manager.set_warehouse_result("503446", {
+            account_number: "503446",
+            customer_name: "John Doe",
+            min_limit: 5000,
+            max_limit: 50000
+        })
+        
+        # Execute
+        response = this.processor.execute(
+            tool_name="check_eligibility",
+            arguments={account_number: "503446"},
+            context={},
+            llm_provider=this.llm_provider
+        )
+        
+        # Assert
+        ASSERT response.status == "success"
+        ASSERT response.data.is_eligible == true
+        ASSERT response.data.account_number == "503446"
+        ASSERT "ELIGIBLE" IN response.message
+    END FUNCTION
+    
+    FUNCTION test_check_eligibility_ineligible():
+        # Setup mock data
+        this.data_manager.set_warehouse_result("503446", NULL)
+        this.data_manager.set_reasons_result("503446", {
+            account_number: "503446",
+            customer_name: "Jane Doe",
+            DPD_Arrears_Check_DS: "Exclude",
+            Arrears_Days: 15
+        })
+        
+        # Execute
+        response = this.processor.execute(
+            tool_name="check_eligibility",
+            arguments={account_number: "503446"},
+            context={},
+            llm_provider=this.llm_provider
+        )
+        
+        # Assert
+        ASSERT response.status == "success"
+        ASSERT response.data.is_eligible == false
+        ASSERT len(response.data.failed_checks) >= 1
+        ASSERT response.data.failed_checks[0].check_type == "DPD_Arrears_Check_DS"
+    END FUNCTION
+END CLASS
+
+# Test Orchestrator
+CLASS TestOrchestrator:
+    
+    FUNCTION test_process_query_with_tool_calling():
+        orchestrator = QueryOrchestrator()
+        
+        WITH mock_llm_generate_with_tools(return_value={
+            tool_name: "check_eligibility",
+            arguments: {account_number: "503446"}
+        }):
+            response = orchestrator.process_query(
+                query="Check eligibility for 503446",
+                session_id="test_session"
+            )
+            
+            ASSERT response.status == "success"
+            ASSERT response.intent == "eligibility_check"
+        END WITH
+    END FUNCTION
+END CLASS
+```
+
+### **B. Integration Test Structure**
+
+```
+CLASS TestEndToEnd:
+    
+    FUNCTION setup():
+        # Start test server
+        this.app = create_test_app()
+        this.client = this.app.test_client()
+        
+        # Load test data
+        this.load_test_data()
+    END FUNCTION
+    
+    FUNCTION test_eligibility_check_flow():
+        # Send query
+        response = this.client.post("/api/query", json={
+            query: "Check eligibility for account 503446",
+            session_id: "test_session_123"
+        })
+        
+        # Assert response
+        ASSERT response.status_code == 200
+        data = response.get_json()
+        
+        ASSERT data.status == "success"
+        ASSERT data.intent == "eligibility_check"
+        ASSERT data.message is NOT NULL
+        ASSERT len(data.message) > 0
+    END FUNCTION
+    
+    FUNCTION test_faq_flow():
+        response = this.client.post("/api/query", json={
+            query: "What is a digital loan?",
+            session_id: "test_session_456"
+        })
+        
+        ASSERT response.status_code == 200
+        data = response.get_json()
+        
+        ASSERT data.status == "success"
+        ASSERT data.intent == "general_inquiry"
+        ASSERT "digital loan" IN data.message.lower()
+    END FUNCTION
+    
+    FUNCTION test_context_retention():
+        session_id = "test_session_789"
+        
+        # First query
+        response1 = this.client.post("/api/query", json={
+            query: "Check eligibility for 503446",
+            session_id: session_id
+        })
+        
+        ASSERT response1.status_code == 200
+        
+        # Follow-up query (should remember account)
+        response2 = this.client.post("/api/query", json={
+            query: "Why is this customer not eligible?",
+            session_id: session_id
+        })
+        
+        ASSERT response2.status_code == 200
+        data2 = response2.get_json()
+        
+        # Should reference the same account from context
+        ASSERT "503446" IN data2.message OR "account" IN data2.message.lower()
+    END FUNCTION
+END CLASS
+```
+
+---
+
+## 📚 **19. Documentation Requirements**
+
+### **A. Adding New Processor (docs/adding_processors.md)**
+
+```markdown
+# Adding a New Processor to Safina Lite
+
+## Step 1: Create Processor Directory
+
+Create a new folder under `processors/`:
+
+```
+processors/
+└── my_new_processor/
+    ├── __init__.py
+    ├── processor.py
+    ├── data/
+    │   └── (your data files)
+    └── prompts/
+        └── templates.yaml
+```
+
+## Step 2: Implement Processor Class
+
+In `processor.py`:
+
+```python
+from processors.base import BaseProcessor
+from models.response import Response
+
+class MyNewProcessor(BaseProcessor):
+    def __init__(self):
+        self.name = "my_new_processor"
+        self.description = "Handles XYZ queries"
+        self.validation_level = "light"  # or "strict" or "none"
+        
+        self.tools = [
+            Tool(
+                name="my_tool",
+                description="Does something useful",
+                parameters_schema={
+                    "param1": {"type": "string", "required": True}
+                },
+                processor_class=self.__class__
+            )
+        ]
+    
+    def get_tools(self):
+        return self.tools
+    
+    def execute(self, tool_name, arguments, context, llm_provider):
+        if tool_name == "my_tool":
+            return self._handle_my_tool(arguments, context, llm_provider)
+        else:
+            raise ProcessorError(f"Unknown tool: {tool_name}")
+    
+    def _handle_my_tool(self, arguments, context, llm_provider):
+        # Your logic here
+        return Response(
+            message="Result message",
+            intent="my_intent",
+            confidence=0.9,
+            status="success"
+        )
+```
+
+## Step 3: Add to Configuration
+
+No code changes needed! The processor is auto-discovered on startup.
+
+Optionally, add to `config.yaml`:
+
+```yaml
+processors:
+  enabled:
+    - "digital_lending"
+    - "faq"
+    - "my_new_processor"  # Add your processor
+```
+
+## Step 4: Test
+
+```bash
+python -m pytest tests/test_my_new_processor.py
+```
+
+## Step 5: Deploy
+
+Restart the application. Your processor is now live!
+```
+
+### **B. Adding New LLM Provider (docs/adding_llm_providers.md)**
+
+```markdown
+# Adding a New LLM Provider
+
+## Step 1: Implement Provider Class
+
+Create `core/llm/my_provider.py`:
+
+```python
+from core.llm.base import BaseLLM
+
+class MyLLM(BaseLLM):
+    def __init__(self, api_key, model, timeout=30):
+        self.api_key = api_key
+        self.model = model
+        self.timeout = timeout
+    
+    def generate(self, prompt, max_tokens=500, temperature=0.7):
+        # Your API call logic
+        pass
+    
+    def generate_with_tools(self, query, context, available_tools):
+        # Your tool-calling logic
+        pass
+    
+    def check_connection(self):
+        # Your connection test logic
+        pass
+```
+
+## Step 2: Register in Configuration
+
+Add to `config.yaml`:
+
+```yaml
+llm:
+  providers:
+    my_provider:
+      api_key: "${MY_PROVIDER_API_KEY}"
+      model: "my-model-name"
+      timeout: 30
+      enabled: true
+```
+
+## Step 3: Register in Initialization
+
+In `main.py` or initialization code:
+
+```python
+from core.llm.my_provider import MyLLM
+
+# Add to provider initialization
+if provider_name == "my_provider":
+    provider = MyLLM(
+        api_key=provider_config["api_key"],
+        model=provider_config["model"],
+        timeout=provider_config["timeout"]
+    )
+```
+
+## Step 4: Test
+
+```bash
+# Test connection
+python -c "from core.llm.my_provider import MyLLM; \
+           p = MyLLM('key', 'model'); \
+           print(p.check_connection())"
+```
+
+Done! Your new LLM provider is ready.
+```
+
+---
+
+## 🎯 **20. Key Design Decisions Summary**
+
+### **WHY THIS ARCHITECTURE?**
+
+**1. Tool-Calling Pattern Instead of Intent Classification**
+- **Reason**: LLMs are better at understanding context and choosing tools dynamically
+- **Benefit**: No manual keyword mapping, more flexible, easier to add new capabilities
+- **Trade-off**: Slightly more LLM calls, but faster development
+
+**2. Plugin-Based Processor System**
+- **Reason**: Add/remove processors without touching core code
+- **Benefit**: True modularity, easier testing, cleaner separation of concerns
+- **Trade-off**: Slightly more complex initialization
+
+**3. SQLite Cache for CSV Data**
+- **Reason**: Pandas DataFrames in memory are slow for large datasets
+- **Benefit**: O(1) lookups, persistent cache, lower memory usage
+- **Trade-off**: Initial cache build time (one-time per 24 hours)
+
+**4. LLM Provider Abstraction**
+- **Reason**: Don't lock into one LLM vendor
+- **Benefit**: Hot-swap providers, fallback options, compare performance
+- **Trade-off**: More code, but worth the flexibility
+
+**5. 2-Hour Session-Based Logging**
+- **Reason**: Balance between fresh logs and too many small files
+- **Benefit**: Clean organization, easier debugging, automatic rotation
+- **Trade-off**: Logs spread across multiple files
+
+**6. Light Validation by Default**
+- **Reason**: Original Safina's strict validation was too slow
+- **Benefit**: Faster responses, trust modern LLMs more
+- **Trade-off**: Slightly higher risk of hallucinations (configurable per processor)
+
+**7. Sliding Window Context (10 interactions)**
+- **Reason**: Don't blow up context window with full history
+- **Benefit**: Consistent performance, manageable memory
+- **Trade-off**: Loses very old context (acceptable for most queries)
+
+---
+
+## 🚀 **21. Implementation Priority Order**
+
+### **Phase 1: Core Foundation (Week 1)**
+1. ✅ Config system + logger
+2. ✅ Base LLM interface + Ollama implementation
+3. ✅ LLM Manager
+4. ✅ Base Processor interface
+5. ✅ Processor Registry with auto-discovery
+6. ✅ Response model
+
+### **Phase 2: First Processor (Week 2)**
+7. ✅ Digital Lending Data Manager (SQLite cache)
+8. ✅ Digital Lending Processor (eligibility checks)
+9. ✅ Tool-calling prompt logic
+10. ✅ Context Manager
+
+### **Phase 3: Orchestrator & API (Week 3)**
+11. ✅ Query Orchestrator
+12. ✅ Flask API endpoints
+13. ✅ Error handling
+14. ✅ Health checks
+
+### **Phase 4: Additional Components (Week 4)**
+15. ✅ FAQ Processor
+16. ✅ General Inquiry Processor
+17. ✅ Gemini LLM Provider
+18. ✅ Frontend (copy from old Safina, minor tweaks)
+
+### **Phase 5: Testing & Polish (Week 5)**
+19. ✅ Unit tests
+20. ✅ Integration tests
+21. ✅ Documentation
+22. ✅ Performance optimization
+
+---
+
+## ✅ **22. Success Criteria Checklist**
+
+Based on your requirements:
+
+| Criteria | Priority | Implementation |
+|----------|----------|----------------|
+| Response time < 3s | **1 (Critical)** | ✅ SQLite cache, light validation, efficient LLM calls |
+| Easy to add processors | **1 (Critical)** | ✅ Auto-discovery, plugin system, no core code changes |
+| Maintain current accuracy | **1 (Critical)** | ✅ Same business logic, improved LLM reasoning |
+| Easier to debug | **1 (Critical)** | ✅ Structured JSON logs, clear separation of concerns |
+| Lower memory usage | **1 (Critical)** | ✅ SQLite vs in-memory DataFrames, sliding window context |
+| Simpler configuration | **1 (Critical)** | ✅ Single YAML file, environment variables |
+| Better error handling | **2 (Important)** | ✅ Hierarchical exceptions, graceful degradation |
+| Under 2000 lines of code | **2 (Important)** | ✅ Est. ~1,800 lines total (vs 8,000 in original) |
+| Support 3+ LLM providers | **3 (Nice-to-have)** | ✅ Ollama, Gemini, extensible for more |
+| Better documentation | **3 (Nice-to-have)** | ✅ Architecture docs, guides for adding components |
+
+---
+
+## 📋 **23. Final Implementation Checklist**
+
+**For Claude Code / Development:**
+
+- [ ] Create project structure
+- [ ] Implement config.yaml loader with env substitution
+- [ ] Implement 2-hour session-based logger
+- [ ] Implement BaseLLM interface
+- [ ] Implement OllamaLLM provider
+- [ ] Implement GeminiLLM provider
+- [ ] Implement LLMManager with fallback logic
+- [ ] Implement BaseProcessor interface
+- [ ] Implement ProcessorRegistry with auto-discovery
+- [ ] Implement DataManager with SQLite caching
+- [ ] Implement DigitalLendingProcessor
+- [ ] Implement FAQProcessor
+- [ ] Implement GeneralInquiryProcessor
+- [ ] Implement ContextManager with sliding window
+- [ ] Implement tool-calling prompt builder
+- [ ] Implement QueryOrchestrator
+- [ ] Implement Flask API endpoints
+- [ ] Implement Response model
+- [ ] Implement error handling hierarchy
+- [ ] Copy and adapt frontend from old Safina
+- [ ] Write unit tests
+- [ ] Write integration tests
+- [ ] Write documentation
+- [ ] Test with real data
+- [ ] Deploy and monitor
+
+---
+
+This architecture gives you:
+- ✅ **80% less code** (8,000 → ~1,800 lines)
+- ✅ **True modularity** (add/remove processors without code changes)
+- ✅ **Multi-LLM support** (hot-swap between Ollama, Gemini, etc.)
+- ✅ **Better performance** (SQLite cache, optimized data access)
+- ✅ **Easier debugging** (structured logs, clear component boundaries)
+- ✅ **Modern patterns** (tool-calling instead of intent classification)
+
