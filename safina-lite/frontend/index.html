@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Safina Lite - NCBA Digital Lending Assistant</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #1a73e8;
+            --primary-dark: #1557b0;
+            --success: #0f9d58;
+            --error: #d93025;
+            --text-primary: #202124;
+            --text-secondary: #5f6368;
+            --border: #dadce0;
+            --bg-primary: #ffffff;
+            --bg-secondary: #f8f9fa;
+            --shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 900px;
+            height: 90vh;
+            background: var(--bg-primary);
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .header-subtitle {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--success);
+            margin-left: auto;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Chat Container */
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: var(--bg-secondary);
+        }
+
+        /* Welcome Screen */
+        .welcome-section {
+            text-align: center;
+            padding: 40px 20px;
+            animation: fadeIn 0.5s;
+        }
+
+        .welcome-section h2 {
+            color: var(--text-primary);
+            margin-bottom: 12px;
+            font-size: 28px;
+        }
+
+        .welcome-section p {
+            color: var(--text-secondary);
+            font-size: 16px;
+            margin-bottom: 30px;
+        }
+
+        .suggestion-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 12px;
+            margin-top: 20px;
+        }
+
+        .suggestion-card {
+            background: var(--bg-primary);
+            padding: 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid var(--border);
+        }
+
+        .suggestion-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow);
+            border-color: var(--primary);
+        }
+
+        .suggestion-card strong {
+            color: var(--primary);
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .suggestion-card p {
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin: 0;
+        }
+
+        /* Messages */
+        .message {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+            animation: slideIn 0.3s;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            flex-direction: row-reverse;
+        }
+
+        .avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+
+        .user .avatar {
+            background: var(--primary);
+            color: white;
+        }
+
+        .assistant .avatar {
+            background: var(--success);
+            color: white;
+        }
+
+        .message-bubble {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            line-height: 1.5;
+        }
+
+        .user .message-bubble {
+            background: var(--primary);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .assistant .message-bubble {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 4px;
+        }
+
+        .assistant .message-bubble strong {
+            color: var(--primary);
+        }
+
+        /* Typing Indicator */
+        .typing-indicator {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .typing-bubble {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            padding: 12px 16px;
+            border-radius: 12px;
+            display: flex;
+            gap: 4px;
+        }
+
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typing {
+            0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+            30% { opacity: 1; transform: translateY(-4px); }
+        }
+
+        /* Input Area */
+        .input-area {
+            padding: 20px;
+            background: var(--bg-primary);
+            border-top: 1px solid var(--border);
+        }
+
+        .input-container {
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+
+        .input-wrapper {
+            flex: 1;
+            position: relative;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 48px;
+            max-height: 120px;
+            padding: 12px 16px;
+            border: 2px solid var(--border);
+            border-radius: 24px;
+            font-family: inherit;
+            font-size: 15px;
+            resize: none;
+            transition: border-color 0.2s;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        button {
+            padding: 12px 24px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 24px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        button:hover {
+            background: var(--primary-dark);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Utility Classes */
+        .hidden {
+            display: none !important;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        /* Scrollbar */
+        .chat-container::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .chat-container::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .chat-container::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 4px;
+        }
+
+        .chat-container::-webkit-scrollbar-thumb:hover {
+            background: var(--text-secondary);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div>
+                <h1>Safina Lite</h1>
+                <div class="header-subtitle">NCBA Digital Lending Assistant</div>
+            </div>
+            <div class="status-indicator" id="statusIndicator"></div>
+        </div>
+
+        <!-- Chat Container -->
+        <div class="chat-container" id="chatContainer">
+            <!-- Welcome Section -->
+            <div class="welcome-section" id="welcomeSection">
+                <h2>👋 Welcome to Safina Lite</h2>
+                <p>I'm your AI assistant for NCBA Bank digital lending queries</p>
+                
+                <div class="suggestion-cards">
+                    <div class="suggestion-card" onclick="app.useSuggestion('Check eligibility for account 503446')">
+                        <strong>🔍 Check Eligibility</strong>
+                        <p>Find out if a customer qualifies for a loan</p>
+                    </div>
+                    <div class="suggestion-card" onclick="app.useSuggestion('What are the eligibility requirements?')">
+                        <strong>📋 Requirements</strong>
+                        <p>Learn about loan eligibility criteria</p>
+                    </div>
+                    <div class="suggestion-card" onclick="app.useSuggestion('How does the digital loan process work?')">
+                        <strong>⚙️ Process Guide</strong>
+                        <p>Understand the loan application workflow</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="input-area">
+            <div class="input-container">
+                <div class="input-wrapper">
+                    <textarea 
+                        id="queryInput" 
+                        placeholder="Ask about loan eligibility, requirements, or processes..."
+                        rows="1"
+                    ></textarea>
+                </div>
+                <button id="sendButton" onclick="app.sendQuery()">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class SafinaApp {
+            constructor() {
+                this.API_BASE = window.location.origin;
+                this.sessionId = this.generateSessionId();
+                this.isFirstMessage = true;
+                
+                // DOM elements
+                this.chatContainer = document.getElementById('chatContainer');
+                this.welcomeSection = document.getElementById('welcomeSection');
+                this.queryInput = document.getElementById('queryInput');
+                this.sendButton = document.getElementById('sendButton');
+                this.statusIndicator = document.getElementById('statusIndicator');
+                
+                this.init();
+            }
+
+            init() {
+                // Auto-resize textarea
+                this.queryInput.addEventListener('input', () => this.resizeTextarea());
+                
+                // Send on Enter (Shift+Enter for new line)
+                this.queryInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.sendQuery();
+                    }
+                });
+
+                // Check API health
+                this.checkHealth();
+                setInterval(() => this.checkHealth(), 30000); // Every 30 seconds
+            }
+
+            generateSessionId() {
+                return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            }
+
+            resizeTextarea() {
+                const textarea = this.queryInput;
+                textarea.style.height = 'auto';
+                textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+            }
+
+            async checkHealth() {
+                try {
+                    const response = await fetch(`${this.API_BASE}/api/health`);
+                    const data = await response.json();
+                    
+                    if (data.status === 'healthy') {
+                        this.statusIndicator.style.background = '#0f9d58';
+                    } else {
+                        this.statusIndicator.style.background = '#f4b400';
+                    }
+                } catch (error) {
+                    this.statusIndicator.style.background = '#d93025';
+                }
+            }
+
+            async sendQuery() {
+                const query = this.queryInput.value.trim();
+                
+                if (!query) return;
+                
+                // Hide welcome screen on first message
+                if (this.isFirstMessage) {
+                    this.welcomeSection.classList.add('hidden');
+                    this.isFirstMessage = false;
+                }
+                
+                // Display user message
+                this.addUserMessage(query);
+                
+                // Clear input
+                this.queryInput.value = '';
+                this.resizeTextarea();
+                
+                // Show typing indicator
+                this.showTypingIndicator();
+                
+                // Disable input
+                this.setInputState(false);
+                
+                try {
+                    const response = await fetch(`${this.API_BASE}/api/query`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            query: query,
+                            session_id: this.sessionId
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    // Remove typing indicator
+                    this.hideTypingIndicator();
+                    
+                    if (response.ok && data.status === 'success') {
+                        this.addAssistantMessage(data.message, data.suggestions);
+                    } else {
+                        this.addAssistantMessage(
+                            'I encountered an error processing your request. Please try again.',
+                            []
+                        );
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                    this.hideTypingIndicator();
+                    this.addAssistantMessage(
+                        'Could not connect to the server. Please check your connection and try again.',
+                        []
+                    );
+                } finally {
+                    this.setInputState(true);
+                    this.queryInput.focus();
+                }
+            }
+
+            addUserMessage(text) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message user';
+                messageDiv.innerHTML = `
+                    <div class="avatar">U</div>
+                    <div class="message-bubble">${this.escapeHtml(text)}</div>
+                `;
+                this.chatContainer.appendChild(messageDiv);
+                this.scrollToBottom();
+            }
+
+            addAssistantMessage(text, suggestions = []) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message assistant';
+                
+                const formattedText = this.formatMessage(text);
+                
+                messageDiv.innerHTML = `
+                    <div class="avatar">S</div>
+                    <div class="message-bubble">${formattedText}</div>
+                `;
+                this.chatContainer.appendChild(messageDiv);
+                this.scrollToBottom();
+            }
+
+            showTypingIndicator() {
+                const typingDiv = document.createElement('div');
+                typingDiv.id = 'typingIndicator';
+                typingDiv.className = 'typing-indicator';
+                typingDiv.innerHTML = `
+                    <div class="avatar">S</div>
+                    <div class="typing-bubble">
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                    </div>
+                `;
+                this.chatContainer.appendChild(typingDiv);
+                this.scrollToBottom();
+            }
+
+            hideTypingIndicator() {
+                const indicator = document.getElementById('typingIndicator');
+                if (indicator) {
+                    indicator.remove();
+                }
+            }
+
+            setInputState(enabled) {
+                this.queryInput.disabled = !enabled;
+                this.sendButton.disabled = !enabled;
+            }
+
+            useSuggestion(suggestion) {
+                this.queryInput.value = suggestion;
+                this.resizeTextarea();
+                this.queryInput.focus();
+            }
+
+            formatMessage(text) {
+                // Bold text: **text** -> <strong>text</strong>
+                text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                
+                // Preserve line breaks
+                text = text.replace(/\n/g, '<br>');
+                
+                return text;
+            }
+
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            scrollToBottom() {
+                setTimeout(() => {
+                    this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
+                }, 100);
+            }
+        }
+
+        // Initialize app
+        const app = new SafinaApp();
+    </script>
+</body>
+</html>

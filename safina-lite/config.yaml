@@ -1,0 +1,53 @@
+app:
+  name: "Safina Lite"
+  version: "2.0.0"
+  environment: "development"
+
+api:
+  host: "0.0.0.0"
+  port: 5000
+  debug: true
+  cors_origins:
+    - "*"
+
+llm:
+  default_provider: "gemini"
+  fallback_order:
+    - "ollama"
+  
+  providers:
+    gemini:
+      api_key: "${GEMINI_API_KEY}"
+      model: "gemini-1.5-flash"
+      timeout: 30
+      enabled: true
+    
+    ollama:
+      host: "http://localhost:11434"
+      model: "llama3.2:3b"
+      timeout: 120
+      enabled: false
+
+processors:
+  enabled:
+    - "digital_lending"
+    - "faq"
+    - "general_inquiry"
+  
+  digital_lending:
+    validation_level: "light"
+    cache_ttl: 86400
+
+context:
+  max_history: 10
+  session_timeout: 7200
+
+logging:
+  level: "INFO"
+  session_duration: 7200
+  base_directory: "logs/"
+  format: "json"
+
+data:
+  cache_enabled: true
+  cache_directory: "cache/"
