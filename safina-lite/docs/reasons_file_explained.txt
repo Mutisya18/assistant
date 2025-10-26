@@ -1,0 +1,341 @@
+Based on your clarification, here's the refined system concept with the four data sources clearly defined:
+
+## **Updated System Architecture with Four Data Sources**
+
+### **Data Source Structure**
+
+**1. Reasons File** - Customer exclusion database
+- Contains customers NOT eligible for loan limits
+- Includes specific exclusion reasons and detailed explanations
+- Primary lookup for "why can't this customer get a loan" queries
+
+**2. Warehouse File** - Eligible customer database  
+- Contains customers who ARE eligible and can be scored
+- Used to confirm positive eligibility status
+- Provides scoring and limit information for qualified customers
+
+**3. Knowledge File** - Issues and resolutions database
+- Comprehensive catalog of all digital lending issues
+- Paired resolutions for each problem type
+- Technical procedures, escalation paths, and departmental responsibilities
+
+**4. Guide File** - AI response instructions
+- Templates and formatting rules for responses
+- Communication standards and tone guidelines
+- Response structure protocols to prevent AI hallucinations
+
+### **Enhanced Query Processing Flow**
+
+**Stage 1: Query Analysis & Classification**
+- Determine if query is customer-specific (has account/customer number) or general
+- Identify query type: eligibility check, technical issue, policy question, or procedural inquiry
+
+**Stage 2: Multi-Source Data Lookup**
+- **For customer-specific queries**: Check Reasons File first (exclusions), then Warehouse File (eligible customers)
+- **For general queries**: Access Knowledge File for issues/resolutions and policy information
+- **For all responses**: Reference Guide File for proper formatting and structure
+
+**Stage 3: Contextual Response Assembly**
+- Cross-reference findings across relevant data sources
+- Apply business logic from Knowledge File to customer-specific situations
+- Format response according to Guide File specifications
+
+**Stage 4: AI-Enhanced Response Generation**
+- Generate natural, professional responses using structured data
+- Maintain consistency with NCBA communication standards
+- Include appropriate escalation information and next steps
+
+### **Query Handling Scenarios**
+
+**Scenario A**: "Why doesn't customer 599650 have a loan limit?"
+- Lookup in Reasons File → Find exclusion reason
+- Reference Knowledge File for detailed explanation and resolution
+- Format response per Guide File templates
+
+**Scenario B**: "Can customer 712199 get a loan?"
+- Check Reasons File → If not found, check Warehouse File
+- Provide eligibility status with appropriate context
+- Include relevant procedural information from Knowledge File
+
+**Scenario C**: "What are the requirements for digital loan eligibility?"
+- Access Knowledge File for policy information
+- Generate comprehensive response covering eligibility criteria
+- Structure according to Guide File formatting rules
+
+**Scenario D**: "How do I resolve a loan repayment sync issue?"
+- Query Knowledge File for technical issue resolution
+- Provide step-by-step resolution process
+- Include escalation procedures and departmental contacts
+
+This approach creates a comprehensive system that can handle both specific customer inquiries and general policy/procedural questions while maintaining data accuracy and response consistency through the structured data sources and AI guidance framework.
+
+
+ the reasons and warehouse files are going to be in excel format and  this is the how the table looks like:
+CUSTOMERNO CUS_NAME_1 RISK_CLASS recency_check ACCOUNT_NUMBER DOB PIN_NUMBER income_proxy DIR monthly_ability max_assigned_limit DPD_Arrears_Check_DS Elma_check KRAPIN_Check Classification_Check Joint_Check Active_Inactive_Check Average_Bal_check Mandates_Check Linked_Base_Check customer_vintage_Check Scheme_Check_DS Staff_Check_DS Risk_Class_Check_DS Status Existing_LFA_Customer_Check_DS LFA_Status_Check_DS USAID_Check_DS reasons reasons_explanation 599650 IDD ALI IBRAHIM A7 Y 5996500019 19980303 A015600637M 24351.83333 0 0 0 Include Include Include Include Include Include Include Include Include Include Include Include Exclude Approved and Active Y Include Include Risk_Class_Check_DS High Risk- fails scoring 599741 MICHAEL KYALO DANIEL A4 Y 5997410016 20040412 A019207257Y 24818.18182 0.18 4467.272727 25000 Exclude Include Include Include Include Include Include Include Include Include Include Include Include Approved and Active Y Include Include DPD_Arrears_Check_DS NCBA Loan in arrears 503446 FRANCIS OKONGO KINYANJUI A5 N 5034460014 19960824 A012857381L 0 0 0 0 Include Include Include Include Include Include Include Include Include Include Include Include Include N Include Include inconsistent_CTOs Inconsistent CTOs 503953 FRED OTIENO JUMA AND JAEL ACHIENG A4 Y 5039530019 19961010 A010230996Q 114318.1818 0.2 532.7703636 3000 Exclude Exclude Include Include Exclude Include Include Exclude Include Include Include Include Include N Include Include DPD_Arrears_Check_DS, Elma_check, Joint_Check, Mandates_Check NCBA Loan in arrears, Not in mobile banking, Joint Account, Not single/sole mandate 520701 ESTHER MUMBI MWAURA A4 N 5207010016 19820717 A007076272X 0 0 0 0 Include Include Include Include Include Include Include Include Include Include Include Include Include N Include Include inconsistent_CTOs Inconsistent CTOs 526411 ABRAHAM GICHUKI MWANGI A6 N 5264110017 19940707 A010295966C 0 0 0 0 Include Include Include Include Include Include Include Include Include Include Include Include Exclude Approved and Active Y Include Include inconsistent_CTOs, Risk_Class_Check_DS Inconsistent CTOs, High Risk- fails scoring 552927 FATMA EL KINDY AND SALIM KAKA A3 N 5529270017 19950212 A015308420L 0 0 0 0 Include Include Include Include Exclude Include Include Exclude Include Include Include Include Include N Include Include inconsistent_CTOs, Joint_Check, Mandates_Check Inconsistent CTOs, Joint Account, Not single/sole mandate 558108 NESSY WACERA KIMANI A2 Y 5581080012 19880830 A005502466U 102096.5018 0.3 18290.20555 198000 Exclude Include Include Include Include Include Include Include Include Include Include Include Include Approved and Active Y Include Include DPD_Arrears_Check_DS NCBA Loan in arrears 526779 THARIQ  MUCHIRI A5 N 5267790015 19890306 A005419003M 0 0 0 0 Include Include Include Include Include Exclude Include Include Include Include Include Include Include N Include Include inconsistent_CTOs, Active_Inactive_Check Inconsistent CTOs, Inactive Account 501103 MERCYLINE AWUOR ODHIAMBO A3 N 5011030018 19911001 A008545702U 0 0 0 0 Include Include Include Include Include Include Include Include Include Include Include Include Include N Include Include inconsistent_CTOs Inconsistent CTOs 782595 ISAAC NJACI A3 N 7825950017 19701215 A002576313P 0 0 0 0 Include Include Include Include Include Include Include Include Include Include Include Include Include N Include Include inconsistent_CTOs Inconsistent CTOs
+
+The customer has to have all parameters marked as include in order for them to qualify for a limit, if one or more is marked exclude, then those are the reasons why they cannot get a limit. 
+
+Addtionally, the reason and the explainer is also availed on the last column of the table.
+
+If the customer is in the warehouse file, then they are eligible for the respective loan limit.
+
+There are 2 loan products that is: 
+1. Digital personal loans (also called LFA, digital loan, personal loan, term loan)
+2. Mobile loans(also called instant loan, sasa loan)
+
+{
+  "title": "Banking Compliance Checks - Comprehensive Guide",
+  "categories": {
+    "credit_risk_and_history": {
+      "name": "Credit Risk & History Checks",
+      "checks": {
+        "risk_classification_check": {
+          "code": "Risk_Class_Check_DS",
+          "issue": "Customer classified as high risk after assessment on lending/default history",
+          "resolution": "The customer should ensure that they service and pay their loans timely to ensure that their CRB record is good and in order.",
+          "additional_details": {
+            "history_review_coverage": "facilities and loans outside the bank",
+            "review_period": "Previous 5 years",
+            "classification_basis": "non-public parameters to avoid window dressing",
+            "customer_review_frequency": "every 30 days",
+            "impact": "Risk classification changes can result in limit allocation"
+          }
+        },
+        "days_past_due_arrears_check": {
+          "code": "DPD_Arrears_Check_DS",
+          "issue": "Customer has active arrears >3 days (digital) or >9 days (mobile loans) or had arrears that went past the respective threshold within the past 2 months",
+          "resolution": "Clear all outstanding arrears and wait 2 months cooling period.",
+          "arrears_coverage": [
+            "Loan arrears (any loan within the bank)",
+            "Credit card arrears",
+            "Account excess or overdraw leaving the account balance negative (any account linked to the customer)"
+          ],
+          "important_notes": [
+            "Automatic cooling period from date arrears are cleared",
+            "If further arrears occur past threshold during cooling period, the cooling period restarts"
+          ]
+        },
+        "scheme_check": {
+          "code": "Scheme_Check_DS",
+          "issue": "Customer's loan transferred to another bank through scheme arrangement",
+          "resolution": "Complete existing scheme obligations with other bank before new loan eligibility."
+        }
+      }
+    },
+    "transaction_pattern_and_activity": {
+      "name": "Transaction Pattern & Activity Checks",
+      "checks": {
+        "inconsistent_credit_turnovers": {
+          "code": "inconsistent_CTOs",
+          "issue": "Customer has inconsistent credit turnovers with irregular transaction patterns",
+          "resolution": "Maintain consistent banking activity and regular income deposits for 2–3 months."
+        },
+        "insufficient_credit_turnovers": {
+          "code": "insufficient_CTOs",
+          "issue": "Customer lacks adequate transaction volume or frequency for lending assessment",
+          "resolution": "Increase banking activity and maintain regular transactions to meet minimum threshold."
+        },
+        "active_inactive_account_check": {
+          "code": "Active_Inactive_Check",
+          "issue": "Customer's account classified as inactive due to insufficient recent activity",
+          "resolution": "Reactivate account through regular transactions and maintain activity for 30+ days."
+        }
+      }
+    },
+    "account_structure_and_configuration": {
+      "name": "Account Structure & Configuration",
+      "checks": {
+        "joint_account_check": {
+          "code": "Joint_Check",
+          "issue": "Customer's joint account doesn't meet single-account holder requirement",
+          "resolution": "Open individual account or convert joint account to individual ownership.",
+          "important_notes": [
+            "Accounts with names containing \"and/or\" are flagged as joint accounts",
+            "Examples: \"mutisya and mutuku\", \"mary or mutisya\", etc."
+          ]
+        },
+        "account_mandates_check": {
+          "code": "Mandates_Check",
+          "issue": "Account mandates not set as SOLE SIGNATORY as required",
+          "resolution": "Update account mandates to SOLE SIGNATORY through branch or Relationship Manager.",
+          "mandate_requirements": [
+            "Only one signatory should be on the account",
+            "Multiple signatories exclude eligibility even if marked \"sole signatory\""
+          ],
+          "examples": {
+            "wont_get_limit": [
+              "Acc no: 23252340012, mandates: 1. mutisya stanley, 2. mike muthoka, BOTH TO SIGN",
+              "Acc no: 23252340012, mandates: 1. mutisya stanley, 2. mike muthoka, SOLE SIGNATORY"
+            ],
+            "will_get_limit": [
+              "Acc no: 23252340012, mandates: 1. mutisya stanley, SOLE SIGNATORY"
+            ]
+          }
+        },
+        "linked_base_account_check": {
+          "code": "Linked_Base_Check",
+          "issue": "Issues with customer's linked account setup or base account configuration",
+          "resolution": "Contact Account Maintenance to resolve base account linking issues.",
+          "details": "Another base number/customer number linked or registered under the customer has an issue (mostly customer classification below A5)"
+        }
+      }
+    },
+    "account_classification_and_requirements": {
+      "name": "Account Classification & Requirements",
+      "checks": {
+        "classification_check": {
+          "code": "Classification_Check",
+          "issue": "Customer's account classification below A5 lending criteria",
+          "resolution": "Contact the customer's Relationship Manager or portfolio department/team to update classification to A5 or higher."
+        },
+        "customer_vintage_check": {
+          "code": "customer_vintage_Check",
+          "issue": "Customer relationship with bank less than 6 months old",
+          "resolution": "Wait until completing 6 months banking relationship with consistent activity."
+        }
+      }
+    },
+    "digital_platform_and_documentation": {
+      "name": "Digital Platform & Documentation",
+      "checks": {
+        "mobile_banking_enrollment": {
+          "code": "Elma_check",
+          "issue": "Customer not enrolled in mobile banking platform (ELMA/Sasa)",
+          "resolution": "Register for mobile banking through branch or digital onboarding."
+        },
+        "kra_pin_check": {
+          "code": "KRAPIN_Check",
+          "issue": "Customer's KRA PIN missing or invalid in the system",
+          "resolution": "Provide valid KRA PIN to branch or update through mobile banking."
+        }
+      }
+    },
+    "income_and_affordability_assessment": {
+      "name": "Income & Affordability Assessment",
+      "checks": {
+        "emi_vs_proxy_income_check": {
+          "code": "EMI_higher_than_proxy_income",
+          "issue": "Loan EMI exceeds customer's estimated proxy income from transaction analysis",
+          "resolution": "Request lower loan amount or increase verifiable income through consistent deposits."
+        }
+      }
+    }
+  },
+  "quick_resolution_summary": {
+    "time_based_resolutions": {
+      "dpd_arrears_cooling_period": "2 months after clearing arrears",
+      "consistent_banking_activity": "2-3 months",
+      "account_reactivation": "30+ days of activity",
+      "customer_vintage_requirement": "6 months banking relationship",
+      "risk_classification_review": "Every 30 days"
+    },
+    "action_based_resolutions": {
+      "classification_update": "Relationship Manager/Portfolio team",
+      "account_linking_issues": "Account Maintenance",
+      "mandate_changes": "Branch/Relationship Manager",
+      "mobile_banking_enrollment": "Branch/Digital onboarding",
+      "kra_pin_update": "Branch/Mobile banking"
+    }
+  },
+  "checks_and_resolutions_table": [
+    {
+      "check_name": "Risk Classification Check",
+      "check_code": "Risk_Class_Check_DS",
+      "issue": "Customer classified as high risk after assessment on lending/default history",
+      "resolution": "The customer should ensure that they service and pay their loans timely to ensure that their CRB record is good and in order.",
+      "category": "Credit Risk & History"
+    },
+    {
+      "check_name": "Days Past Due Arrears Check",
+      "check_code": "DPD_Arrears_Check_DS",
+      "issue": "Customer has active arrears >3 days (digital) or >9 days (mobile loans) or had arrears that went past the respective threshold within the past 2 months",
+      "resolution": "Clear all outstanding arrears and wait 2 months cooling period.",
+      "category": "Credit Risk & History"
+    },
+    {
+      "check_name": "Scheme Check",
+      "check_code": "Scheme_Check_DS",
+      "issue": "Customer's loan transferred to another bank through scheme arrangement",
+      "resolution": "Complete existing scheme obligations with other bank before new loan eligibility.",
+      "category": "Credit Risk & History"
+    },
+    {
+      "check_name": "Inconsistent Credit Turnovers",
+      "check_code": "inconsistent_CTOs",
+      "issue": "Customer has inconsistent credit turnovers with irregular transaction patterns",
+      "resolution": "Maintain consistent banking activity and regular income deposits for 2–3 months.",
+      "category": "Transaction Pattern & Activity"
+    },
+    {
+      "check_name": "Insufficient Credit Turnovers",
+      "check_code": "insufficient_CTOs",
+      "issue": "Customer lacks adequate transaction volume or frequency for lending assessment",
+      "resolution": "Increase banking activity and maintain regular transactions to meet minimum threshold.",
+      "category": "Transaction Pattern & Activity"
+    },
+    {
+      "check_name": "Active/Inactive Account Check",
+      "check_code": "Active_Inactive_Check",
+      "issue": "Customer's account classified as inactive due to insufficient recent activity",
+      "resolution": "Reactivate account through regular transactions and maintain activity for 30+ days.",
+      "category": "Transaction Pattern & Activity"
+    },
+    {
+      "check_name": "Joint Account Check",
+      "check_code": "Joint_Check",
+      "issue": "Customer's joint account doesn't meet single-account holder requirement",
+      "resolution": "Open individual account or convert joint account to individual ownership.",
+      "category": "Account Structure & Configuration"
+    },
+    {
+      "check_name": "Account Mandates Check",
+      "check_code": "Mandates_Check",
+      "issue": "Account mandates not set as SOLE SIGNATORY as required",
+      "resolution": "Update account mandates to SOLE SIGNATORY through branch or Relationship Manager.",
+      "category": "Account Structure & Configuration"
+    },
+    {
+      "check_name": "Linked Base Account Check",
+      "check_code": "Linked_Base_Check",
+      "issue": "Issues with customer's linked account setup or base account configuration",
+      "resolution": "Contact Account Maintenance to resolve base account linking issues.",
+      "category": "Account Structure & Configuration"
+    },
+    {
+      "check_name": "Classification Check",
+      "check_code": "Classification_Check",
+      "issue": "Customer's account classification below A5 lending criteria",
+      "resolution": "Contact the customer's Relationship Manager or portfolio department/team to update classification to A5 or higher.",
+      "category": "Account Classification & Requirements"
+    },
+    {
+      "check_name": "Customer Vintage Check",
+      "check_code": "customer_vintage_Check",
+      "issue": "Customer relationship with bank less than 6 months old",
+      "resolution": "Wait until completing 6 months banking relationship with consistent activity.",
+      "category": "Account Classification & Requirements"
+    },
+    {
+      "check_name": "Mobile Banking Enrollment",
+      "check_code": "Elma_check",
+      "issue": "Customer not enrolled in mobile banking platform (ELMA/Sasa)",
+      "resolution": "Register for mobile banking through branch or digital onboarding.",
+      "category": "Digital Platform & Documentation"
+    },
+    {
+      "check_name": "KRA PIN Check",
+      "check_code": "KRAPIN_Check",
+      "issue": "Customer's KRA PIN missing or invalid in the system",
+      "resolution": "Provide valid KRA PIN to branch or update through mobile banking.",
+      "category": "Digital Platform & Documentation"
+    },
+    {
+      "check_name": "EMI vs Proxy Income Check",
+      "check_code": "EMI_higher_than_proxy_income",
+      "issue": "Loan EMI exceeds customer's estimated proxy income from transaction analysis",
+      "resolution": "Request lower loan amount or increase verifiable income through consistent deposits.",
+      "category": "Income & Affordability Assessment"
+    }
+  ]
+}
+
